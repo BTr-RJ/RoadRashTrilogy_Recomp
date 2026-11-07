@@ -247,7 +247,7 @@ def verify_evidence(root: Path, game: str) -> dict:
 def generate(root: Path, game: str) -> dict:
     state_path = root / ".local" / "games" / f"{game}.json"
     if not state_path.exists():
-        raise ProjectError(f"Importe a ROM antes: .\\rr.ps1 import-rom {game} <caminho>")
+        raise ProjectError(f"Importe a ROM antes: python tools/rr.py import-rom {game} <caminho>")
     state = read_json(state_path)
     rom = root / state["rom"]
     if inspect_rom(rom)["sha256"] != state["report"]["sha256"]:

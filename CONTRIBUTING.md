@@ -1,6 +1,6 @@
 # Contributing
 
-Read [AGENTS.md](AGENTS.md) and [the build guide](docs/BUILDING.md) first.
+Read [the build guide](docs/BUILDING.md) and [video guide](docs/VIDEO.md) first.
 Keep changes focused and explain the concrete problem and resulting behavior.
 Run relevant native tests and `python -m unittest discover -s tests -p "test_*.py"`.
 

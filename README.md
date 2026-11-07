@@ -66,19 +66,8 @@ the original pixels and elapsed time. [Capture details and hashes](docs/media/0.
   button/axis capture, controller assignment, deadzone and 3-/6-button pad options.
 - Continuous scenery and vehicle zoom, road/marking smoothing and short visual
   prediction in recognized single-player races, preserving original game speed.
-- Wide sprite margin recovery and continuous vehicle depth across animation
-  changes; [implementation](docs/WIDE-SPRITES-ARCADE-ZOOM.md) and
-  [high-curve / near-camera corrections](docs/CURVE-NEAR-ZOOM.md).
-- Vehicles follow the current hill profile and keep their authored proportions
-  beside the player; [vehicle depth and validation](docs/HILL-VEHICLES.md).
-- Curve-relative vehicle lanes, live far-cutoff recovery and separate forward /
-  mirror poses stabilize fast steering and braking; [latest corrections](docs/VEHICLE-LANES.md).
-- Continued near-camera growth and complete sprite exits during overtakes;
-  [current correction and arcade / 3DO / PS1 / Saturn references](docs/SPRITE-APPROACH.md).
-- Bounded rival lane correction, native attack-overlay order and safe transitions
-  between riding and separate rider/bike poses; [latest validation](docs/RIVAL-TRANSITIONS.md).
-- Native vehicle anchors preserved at the starting grid and close pose changes,
-  with depth-consistent height corrections; [current follow-up](docs/NATIVE-VEHICLE-ANCHORS.md).
+- Source-art margin recovery, continuous approach scaling and road-anchored
+  vehicles on curves and hills, preserving the original animation poses.
 - Optional experimental 16:9 expansion, resolution selection and CRT filters
   through librashader / koko-aio.
 - Original sound and optional local remake music, independent volume settings,
@@ -96,9 +85,10 @@ The original soundtrack remains selectable. See [music](music/README.md) and
 
 The repository follows the local-build distribution model of
 [BTr-RJ/RedBaron_Recomp](https://github.com/BTr-RJ/RedBaron_Recomp): integration
-source, patches, documentation and installer tools are public; user-owned game
-inputs and generated game code remain local. Source navigation, reproducible
-build/test commands and development history are in [AGENTS.md](AGENTS.md).
+source, patches, tests and installer tools are public; user-owned game inputs
+and generated game code remain local. See the [build guide](docs/BUILDING.md)
+for source navigation and reproducible build/test commands, and the
+[video guide](docs/VIDEO.md) for presentation settings and limits.
 
 | Directory | Purpose |
 |---|---|
@@ -109,7 +99,8 @@ build/test commands and development history are in [AGENTS.md](AGENTS.md).
 | games | Exact revision hashes and public configuration metadata |
 | tools, scripts | Verified bootstrap, local build, validation and packaging |
 | patches | Reviewable pinned-runtime integration changes |
-| docs, .github | Guides, technical history, notices and source checks |
+| tests | Synthetic pipeline, installation and native regression tests |
+| docs, .github | User/build guides, license notices and source checks |
 
 ## Bugs and contributions
 

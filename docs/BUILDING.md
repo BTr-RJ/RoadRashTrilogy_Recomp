@@ -55,6 +55,33 @@ integration source remain in `src/launcher` and `src/game`; scripts remain in
 validation and issue templates. A release is a manual owner-approved action;
 the workflow never publishes releases.
 
-See [AGENTS.md](../AGENTS.md) for the source map, engine history and continuation
-instructions. Historical `rr.ps1` research commands and older bootstrap scripts
-remain for development; the supported 0.50 installation path is `install.ps1`.
+## Source map
+
+| Area | Location |
+|---|---|
+| Native launcher, controls and installation UI | `src/launcher/` |
+| Per-game adapters and read-only scene observations | `src/game/` |
+| Sprite geometry, terrain, road markings and GPU/CRT presentation | `src/presentation/` |
+| Original/remake audio and local progress | `src/music/`, `src/achievements/` |
+| Supported revisions, verified hooks and build configuration | `games/` |
+| SDK bootstrap and reproducible integration patches | `tools/`, `patches/runtime-integration.patch` |
+| Synthetic and native tests | `tests/` |
+
+The supported installation entry point is `scripts/install.ps1`. The public
+tree contains the tools required by that pipeline, source tests and packaging.
+Agent instructions, design work files, historical reports and exploratory
+capture scripts are maintained outside the public tree.
+
+## Public source audit
+
+```powershell
+python tools/audit_repository.py
+python tools/package_release.py --source-only --output build/public-source-check
+python tools/audit_repository.py --package --root build/public-source-check/RoadRashTrilogyRecomp-0.50-source
+```
+
+The repository and package share an explicit file policy in
+`tools/package_release.py`. When adding a required tool or public guide, update
+that policy and its regression tests together. CI checks both the tracked tree
+and the generated source package. Keep local development notes out of commits
+and distributable packages.

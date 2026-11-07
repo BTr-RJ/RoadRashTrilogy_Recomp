@@ -30,11 +30,11 @@ New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $installRoot '.local') -Force | Out-Null
 @{product='RoadRashTrilogyRecomp';version='0.50';status='installing'} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 if ($sourceRoot -ne $installRoot) {
-    foreach ($name in @('src','tools','scripts','games','assets','patches','docs','config','tests','music')) {
+    foreach ($name in @('src','tools','scripts','games','assets','patches','docs','tests','music')) {
         $from=Join-Path $sourceRoot $name
         if (Test-Path -LiteralPath $from) { Copy-Item -LiteralPath $from -Destination $installRoot -Recurse -Force }
     }
-    foreach ($name in @('CMakeLists.txt','RoadRashTrilogyRecomp.exe','SDL2.dll','README.md','CREDITS.md','THIRD_PARTY_NOTICES.md','AGENTS.md','PRODUCT.md','DESIGN.md','Jogar.cmd')) {
+    foreach ($name in @('CMakeLists.txt','RoadRashTrilogyRecomp.exe','SDL2.dll','README.md','CREDITS.md','THIRD_PARTY_NOTICES.md','Jogar.cmd')) {
         $from=Join-Path $sourceRoot $name
         if (Test-Path -LiteralPath $from) { Copy-Item -LiteralPath $from -Destination $installRoot -Force }
     }

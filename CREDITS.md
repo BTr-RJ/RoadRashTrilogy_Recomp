@@ -9,9 +9,8 @@
 - **Classic cover sources:** libretro-thumbnails / Sega_-_Mega_Drive_-_Genesis;
   exact URLs and hashes are retained in `assets/launcher/sources.json`.
 - **Barlow and Barlow Condensed:** Jeremy Tribby and contributors, SIL OFL 1.1.
-- **Original 0.50 masthead:** AI-generated for this project; exact prompt is in
-  `assets/launcher/brand-050.prompt.txt`. The RR icon is rendered by
-  `tools/make_brand_assets.py`; the classic covers remain the launcher focus.
+- **Original 0.50 masthead:** AI-generated for this project. The RR application
+  icon was created for the launcher; classic covers retain their source credits.
 - **SDL2**, **rcheevos**, **ymfm**, **superzazu/z80**, **clowncommon**,
   **minicoro**, **m68k-recomp-core**, **z80-recomp-core**, **rbengine** and
   their contributors provide runtime, input, sound and build support.

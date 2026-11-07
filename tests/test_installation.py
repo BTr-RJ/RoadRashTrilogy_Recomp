@@ -58,6 +58,36 @@ class InstallationTests(unittest.TestCase):
             self.assertEqual([x['path'] for x in manifest['files']],['src/main.cpp'])
             (dest/'src/leaked.bin').write_bytes(b'bad')
             with self.assertRaisesRegex(ValueError,'Private/generated'):release.audit(dest)
+    def test_source_package_excludes_internal_work_and_capture_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)/'project';root.mkdir()
+            public=('src/main.cpp','tools/install_roms.py','scripts/build.ps1',
+                    'docs/BUILDING.md','docs/VIDEO.md','patches/runtime-integration.patch',
+                    'assets/launcher/brand-050.png')
+            internal=('AGENTS.md','PRODUCT.md','DESIGN.md','.impeccable/design.json',
+                      'docs/RESEARCH.md','docs/VALIDATION-0.50.md',
+                      'tools/probe_geometry_video.py','config/enhancements.json',
+                      'assets/launcher/brand-050.prompt.txt','assets/launcher/app-icon.png')
+            for name in (*public,*internal):
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(name)
+            dest=Path(tmp)/'source';manifest=release.stage(root,dest)
+            self.assertEqual({item['path'] for item in manifest['files']},set(public))
+            with zipfile.ZipFile(release.archive(dest)) as archive:
+                names={Path(name).relative_to('source').as_posix() for name in archive.namelist()}
+                self.assertEqual(names,set(public)|{'PACKAGE-MANIFEST.json'})
+    def test_public_source_audit_rejects_reintroduced_agent_notes(self):
+        audit=module('audit_repository')
+        with tempfile.TemporaryDirectory() as tmp:
+            root=Path(tmp)
+            required=('CMakeLists.txt','README.md','scripts/install.ps1','scripts/build.ps1',
+                      'tools/public-tools.lock.json','patches/runtime-integration.patch',
+                      'games/supported-roms.json','src/game/game_spec.c','src/launcher/main.cpp')
+            for name in required:
+                path=root/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text('fixture')
+            audit.audit(root,package=True)
+            (root/'AGENTS.md').write_text('private continuation notes')
+            with self.assertRaisesRegex(ValueError,'Non-public files: AGENTS.md'):
+                audit.audit(root,package=True)
     def test_offline_package_rejects_corrupt_dependency(self):
         with tempfile.TemporaryDirectory() as tmp:
             root=Path(tmp)/'project';(root/'tools').mkdir(parents=True);(root/'.tools/downloads').mkdir(parents=True)

@@ -12,5 +12,9 @@ jobs:
           python-version: '3.13'
       - name: Synthetic pipeline and installer tests
         run: python -m unittest discover -s tests -p "test_*.py" -v
+      - name: Audit public repository contents
+        run: python tools/audit_repository.py
       - name: Audit ROM-free source package
-        run: python tools/package_release.py --source-only --output build/ci-public
+        run: |
+          python tools/package_release.py --source-only --output build/ci-public
+          python tools/audit_repository.py --package --root build/ci-public/RoadRashTrilogyRecomp-0.50-source

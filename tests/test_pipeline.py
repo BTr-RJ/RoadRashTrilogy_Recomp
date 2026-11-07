@@ -181,7 +181,7 @@ class PipelineTests(unittest.TestCase):
     def install_test_tool(self):
         real = rr.recompiler_path(PROJECT)
         if not real.is_file():
-            self.skipTest("GenesisRecomp indisponivel; execute scripts/setup.ps1")
+            self.skipTest("Pinned GenesisRecomp is not prepared in this source checkout")
         shutil.copytree(real.parent, rr.recompiler_path(self.root).parent)
 
     def test_real_static_codegen_on_synthetic_rom(self):
