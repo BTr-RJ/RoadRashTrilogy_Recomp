@@ -1,0 +1,5 @@
+# Add only addresses confirmed against a specific ROM SHA256.
+# No Road Rash II routines have been mapped yet.
+[functions]
+extra = []
+blacklist = []

@@ -1,0 +1,19 @@
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -2667,6 +2667,16 @@
+         win_w = ws_canvas_w() * win_scale;
+         win_h = win_w * WS_ASPECT_H / WS_ASPECT_W;   /* true 16:9 */
+     }
++    /* RR_OUTPUT_SIZE: explicit output dimensions selected in the trilogy launcher.
++     * Native rendering remains at console resolution until its custom renderer
++     * is enabled; the SDL target controls output scaling and letterboxing. */
++    {
++        const char *rw=getenv("RR_OUTPUT_WIDTH"), *rh=getenv("RR_OUTPUT_HEIGHT");
++        if (rw && rh) {
++            int w=atoi(rw), h=atoi(rh);
++            if (w>=320 && w<=7680 && h>=224 && h<=4320) { win_w=w; win_h=h; }
++        }
++    }
+     /* Scripted launcher tests must stay hidden after the handoff to gameplay. */
+     int test_hidden = getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN");
+     Uint32 win_flags = ((benchmark_frames || test_hidden) ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN)

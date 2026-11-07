@@ -1,0 +1,15 @@
+{
+  "librashader": {
+    "url": "https://github.com/SnowflakePowered/librashader/releases/download/librashader-v0.12.0/librashader-x86_64-windows-v0.12.0-optimized.zip",
+    "sha256": "521fe0f364bfa705883f9e99fb1733a3a24f0f403bcc5591b6b78f6cff289183"
+  },
+  "d3dx": {
+    "url": "https://api.nuget.org/v3-flatcontainer/microsoft.dxsdk.d3dx/9.29.952.8/microsoft.dxsdk.d3dx.9.29.952.8.nupkg",
+    "sha256": "ead0906ae8a26c18a7525da7490127a2110f7c58f18293738283e30e97c6ea4b"
+  },
+  "koko-aio": {
+    "url": "https://codeload.github.com/kokoko3k/koko-aio-slang/zip/64f3d8338ccaf3bc4024ad01f0e6da4a10da418b",
+    "commit": "64f3d8338ccaf3bc4024ad01f0e6da4a10da418b",
+    "sha256": "dfbc3d3741c2e2fb2e77d3a7f75d67db7b0a6cd750adf76717f1a49bc51c4ef9"
+  }
+}

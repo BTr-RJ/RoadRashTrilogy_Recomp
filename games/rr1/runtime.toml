@@ -1,0 +1,14 @@
+# EXPERIMENTAL codegen-only profile. Not a qualified game runner.
+# Input SHA256: f7e95580baf30184d4d18a44042ea7a353308a8ed301d8421aed42f7b0f89663
+# Only vector-table candidates are seeded; code coverage is unknown.
+[game]
+output_prefix = "rr1"
+discovery_files = ["discovery.toml"]
+
+[ram_layout]
+# Only the initial stack value is known. Other RAM fields remain unmapped.
+initial_ssp = 0x00FFFFF6
+
+[functions]
+extra = [0x000200, 0x001164, 0x0013C0, 0x0013CE, 0x0013DC, 0x0013EA, 0x0013F8, 0x001406, 0x001414, 0x001422, 0x001430, 0x00143E, 0x00144C, 0x00145A]
+blacklist = []

@@ -1,0 +1,18 @@
+{
+  "schema": 1,
+  "rom_sha256": "1da6a37c09ab87370334cb26dc0339bee85a6b581d3dc7216dc880a71a52aae6",
+  "reference_sha1": "b2324833bf81223a9626a6060cafc203dd203468",
+  "source": "https://github.com/plarionov/road-rash-3-physics/blob/ab54bcf59c8067c77347e3321ab6971efa6799a0/TECHNICAL.md",
+  "byte_checks": [
+    {"name": "HBlank vector", "offset": "0x70", "expected_hex": "000024fa"},
+    {"name": "VBlank vector", "offset": "0x78", "expected_hex": "000021b6"}
+  ],
+  "ram_candidates": {
+    "player1_slot": "0xFF09B2",
+    "player2_slot": "0xFF0E32",
+    "race_step_vblanks": "0xFF1BDC",
+    "pause": "0xFF2548",
+    "two_player_mode": "0xFF022C",
+    "frame_buffer_pointer": "0xFF278A"
+  }
+}

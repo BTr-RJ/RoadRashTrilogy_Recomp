@@ -1,0 +1,19 @@
+{
+  "schema": 1,
+  "python": {
+    "version": "3.13.9",
+    "url": "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip",
+    "sha256": "91d828c2da3a029b41699e918674a0cb379c02cf20dab9c501306885f837402a",
+    "archive": "python-3.13.9-embed-amd64.zip",
+    "directory": "python"
+  },
+  "genesisrecomp": {
+    "version": "0.1.2",
+    "source_commit": "252535d12476f5a697cf87082ea3e827f6430a1b",
+    "core_commit": "e9ebf608933969903edd80ac0b79d41ddb2f013e",
+    "url": "https://github.com/mstan/segagenesisrecomp/releases/download/v0.1.2/GenesisRecomp-windows-x64-v0.1.2.zip",
+    "sha256": "f98c7c37113b8f67e0b9ba8485b433f335d5159934af379d86aa7b5c3d9b7a5f",
+    "archive": "GenesisRecomp-windows-x64-v0.1.2.zip",
+    "directory": "genesisrecomp"
+  }
+}

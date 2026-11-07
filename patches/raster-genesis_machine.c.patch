@@ -1,0 +1,79 @@
+--- a/runner/video/genesis_machine.c
++++ b/runner/video/genesis_machine.c
+@@ -467,6 +467,13 @@
+ #endif
+ }
+ 
++/* RR_RASTER_PHASE: physical raster time, independent of codegen accounting. */
++extern uint32_t g_audio_cycle_counter;
++static uint32_t rr_slice_cpu, rr_slice_phase;
++uint32_t rr_raster_phase(void) {
++    extern uint32_t g_audio_cycle_counter;
++    return rr_slice_phase + (g_audio_cycle_counter-rr_slice_cpu)*7u;
++}
+ void machine_run_frame(GenesisScanlineSink sink, void *user)
+ {
+     GenesisMachine *m = &g_machine;
+@@ -480,19 +487,16 @@
+         s_line_base = (uint32_t)line * MASTER_PER_LINE;
+         s_z80_off   = 0;   /* 68K writes during the chunk below land at the line start */
+ 
+-        /* RR: arbitrate in eight bounded slices. The sound driver repeatedly
+-         * releases/reacquires BUSREQ inside one scanline; a whole-line slice
+-         * may always observe it stopped and starve the Z80 indefinitely. */
+-        for (unsigned slice = 0; slice < 8; ++slice) {
+-            s_z80_off = slice * MASTER_PER_LINE / 8u;
+-            glue_run_game_chunk((slice + 1u) * M68K_PER_LINE / 8u - slice * M68K_PER_LINE / 8u);
+-            glue_own_vint_service_latched(&m->vdp);
+-            step_z80(m, (slice + 1u) * Z80_PER_LINE / 8u - slice * Z80_PER_LINE / 8u);
+-        }
+-
++        uint16_t rr_latched_vsram[GVDP_VSRAM_ENTRIES];
++        memcpy(rr_latched_vsram,m->vdp.vsram,sizeof rr_latched_vsram);
++        for (unsigned slice=0;slice<8;++slice) {
++        rr_slice_phase=slice*MASTER_PER_LINE/8u;
++        rr_slice_cpu=g_audio_cycle_counter;
++        m->vdp.in_hblank=slice>=6;
++        if(slice==0 || slice==6) {
+         /* Deliver interrupts to the 68K (and the Z80 at vblank). */
+-        if (irq & GVDP_IRQ_HBLANK) glue_own_interrupt(4, &m->vdp);
+-        if (irq & GVDP_IRQ_VBLANK) {
++        if (slice==6 && (irq & GVDP_IRQ_HBLANK)) glue_own_interrupt(4, &m->vdp);
++        if (slice==0 && (irq & GVDP_IRQ_VBLANK)) {
+             /* Assert the Z80 vblank IRQ and LEAVE it pending — the Z80 takes it
+              * on a later step_z80 (when IFF1 is enabled) and superzazu clears
+              * int_pending on accept. The old code de-asserted immediately with
+@@ -522,6 +526,8 @@
+             glue_own_interrupt(6, &m->vdp);
+         }
+ 
++        }
++        if(slice==6) {
+         /* Render + emit active scanlines. In interlace mode 2 each raster
+          * line yields TWO output rows (the even and odd fields' lines,
+          * rendered progressively into a 448-row frame). */
+@@ -541,7 +547,11 @@
+                     gvdp_evaluate_scanline(&m->vdp, row);
+                     continue;
+                 }
++                uint16_t rr_live_vsram[GVDP_VSRAM_ENTRIES];
++                memcpy(rr_live_vsram,m->vdp.vsram,sizeof rr_live_vsram);
++                memcpy(m->vdp.vsram,rr_latched_vsram,sizeof rr_latched_vsram);
+                 int n = gvdp_render_scanline(&m->vdp, row, idxbuf);
++                memcpy(m->vdp.vsram,rr_live_vsram,sizeof rr_live_vsram);
+                 const uint32_t *host_palette = gvdp_host_palette();
+                 if (host_palette)
+                     memcpy(s_cram_argb + GVDP_HOST_PALETTE_BASE, host_palette,
+@@ -555,6 +565,12 @@
+             }
+         }
+ 
++        }
++        s_z80_off=rr_slice_phase;
++        glue_run_game_chunk((slice+1u)*M68K_PER_LINE/8u-slice*M68K_PER_LINE/8u);
++        glue_own_vint_service_latched(&m->vdp);
++        step_z80(m,(slice+1u)*Z80_PER_LINE/8u-slice*Z80_PER_LINE/8u);
++        }
+         m->master_cycle += MASTER_PER_LINE;
+     }
+     g_snd_frame++;   /* [SND-TRACE] */

@@ -1,0 +1,340 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-11-06T15:35:10.399Z",
+  "title": "Design System: Road Rash Trilogy Recomp",
+  "extensions": {
+    "colorMeta": {
+      "primary": {
+        "role": "primary",
+        "displayName": "Ride Yellow",
+        "tonalRamp": [
+          "oklch(15.00% 0.16869 87.95)",
+          "oklch(26.43% 0.16869 87.95)",
+          "oklch(37.86% 0.16869 87.95)",
+          "oklch(49.29% 0.16869 87.95)",
+          "oklch(60.71% 0.16869 87.95)",
+          "oklch(72.14% 0.16869 87.95)",
+          "oklch(83.57% 0.16869 87.95)",
+          "oklch(95.00% 0.16869 87.95)"
+        ]
+      },
+      "primary-pressed": {
+        "role": "primary",
+        "displayName": "Pressed Yellow",
+        "tonalRamp": [
+          "oklch(15.00% 0.14722 81.72)",
+          "oklch(26.43% 0.14722 81.72)",
+          "oklch(37.86% 0.14722 81.72)",
+          "oklch(49.29% 0.14722 81.72)",
+          "oklch(60.71% 0.14722 81.72)",
+          "oklch(72.14% 0.14722 81.72)",
+          "oklch(83.57% 0.14722 81.72)",
+          "oklch(95.00% 0.14722 81.72)"
+        ]
+      },
+      "neutral-bg": {
+        "role": "neutral",
+        "displayName": "Road Charcoal",
+        "tonalRamp": [
+          "oklch(15.00% 0.00627 236.95)",
+          "oklch(26.43% 0.00627 236.95)",
+          "oklch(37.86% 0.00627 236.95)",
+          "oklch(49.29% 0.00627 236.95)",
+          "oklch(60.71% 0.00627 236.95)",
+          "oklch(72.14% 0.00627 236.95)",
+          "oklch(83.57% 0.00627 236.95)",
+          "oklch(95.00% 0.00627 236.95)"
+        ]
+      },
+      "panel": {
+        "role": "neutral",
+        "displayName": "Utility Charcoal",
+        "tonalRamp": [
+          "oklch(15.00% 0.00596 236.82)",
+          "oklch(26.43% 0.00596 236.82)",
+          "oklch(37.86% 0.00596 236.82)",
+          "oklch(49.29% 0.00596 236.82)",
+          "oklch(60.71% 0.00596 236.82)",
+          "oklch(72.14% 0.00596 236.82)",
+          "oklch(83.57% 0.00596 236.82)",
+          "oklch(95.00% 0.00596 236.82)"
+        ]
+      },
+      "cover-surface": {
+        "role": "neutral",
+        "displayName": "Shelf Charcoal",
+        "tonalRamp": [
+          "oklch(15.00% 0.00604 236.85)",
+          "oklch(26.43% 0.00604 236.85)",
+          "oklch(37.86% 0.00604 236.85)",
+          "oklch(49.29% 0.00604 236.85)",
+          "oklch(60.71% 0.00604 236.85)",
+          "oklch(72.14% 0.00604 236.85)",
+          "oklch(83.57% 0.00604 236.85)",
+          "oklch(95.00% 0.00604 236.85)"
+        ]
+      },
+      "cover-selected": {
+        "role": "neutral",
+        "displayName": "Selected Charcoal",
+        "tonalRamp": [
+          "oklch(15.00% 0.00601 214.39)",
+          "oklch(26.43% 0.00601 214.39)",
+          "oklch(37.86% 0.00601 214.39)",
+          "oklch(49.29% 0.00601 214.39)",
+          "oklch(60.71% 0.00601 214.39)",
+          "oklch(72.14% 0.00601 214.39)",
+          "oklch(83.57% 0.00601 214.39)",
+          "oklch(95.00% 0.00601 214.39)"
+        ]
+      },
+      "button": {
+        "role": "neutral",
+        "displayName": "Action Charcoal",
+        "tonalRamp": [
+          "oklch(15.00% 0.00693 229.12)",
+          "oklch(26.43% 0.00693 229.12)",
+          "oklch(37.86% 0.00693 229.12)",
+          "oklch(49.29% 0.00693 229.12)",
+          "oklch(60.71% 0.00693 229.12)",
+          "oklch(72.14% 0.00693 229.12)",
+          "oklch(83.57% 0.00693 229.12)",
+          "oklch(95.00% 0.00693 229.12)"
+        ]
+      },
+      "button-hover": {
+        "role": "neutral",
+        "displayName": "Raised Tone",
+        "tonalRamp": [
+          "oklch(15.00% 0.00553 196.88)",
+          "oklch(26.43% 0.00553 196.88)",
+          "oklch(37.86% 0.00553 196.88)",
+          "oklch(49.29% 0.00553 196.88)",
+          "oklch(60.71% 0.00553 196.88)",
+          "oklch(72.14% 0.00553 196.88)",
+          "oklch(83.57% 0.00553 196.88)",
+          "oklch(95.00% 0.00553 196.88)"
+        ]
+      },
+      "ink": {
+        "role": "neutral",
+        "displayName": "Warm Paper",
+        "tonalRamp": [
+          "oklch(15.00% 0.01902 93.67)",
+          "oklch(26.43% 0.01902 93.67)",
+          "oklch(37.86% 0.01902 93.67)",
+          "oklch(49.29% 0.01902 93.67)",
+          "oklch(60.71% 0.01902 93.67)",
+          "oklch(72.14% 0.01902 93.67)",
+          "oklch(83.57% 0.01902 93.67)",
+          "oklch(95.00% 0.01902 93.67)"
+        ]
+      },
+      "muted": {
+        "role": "neutral",
+        "displayName": "Quiet Grey",
+        "tonalRamp": [
+          "oklch(15.00% 0.00915 128.60)",
+          "oklch(26.43% 0.00915 128.60)",
+          "oklch(37.86% 0.00915 128.60)",
+          "oklch(49.29% 0.00915 128.60)",
+          "oklch(60.71% 0.00915 128.60)",
+          "oklch(72.14% 0.00915 128.60)",
+          "oklch(83.57% 0.00915 128.60)",
+          "oklch(95.00% 0.00915 128.60)"
+        ]
+      },
+      "dialog-ink": {
+        "role": "neutral",
+        "displayName": "Dialog Paper",
+        "tonalRamp": [
+          "oklch(15.00% 0.00252 165.07)",
+          "oklch(26.43% 0.00252 165.07)",
+          "oklch(37.86% 0.00252 165.07)",
+          "oklch(49.29% 0.00252 165.07)",
+          "oklch(60.71% 0.00252 165.07)",
+          "oklch(72.14% 0.00252 165.07)",
+          "oklch(83.57% 0.00252 165.07)",
+          "oklch(95.00% 0.00252 165.07)"
+        ]
+      },
+      "primary-ink": {
+        "role": "neutral",
+        "displayName": "Action Ink",
+        "tonalRamp": [
+          "oklch(15.00% 0.00624 236.93)",
+          "oklch(26.43% 0.00624 236.93)",
+          "oklch(37.86% 0.00624 236.93)",
+          "oklch(49.29% 0.00624 236.93)",
+          "oklch(60.71% 0.00624 236.93)",
+          "oklch(72.14% 0.00624 236.93)",
+          "oklch(83.57% 0.00624 236.93)",
+          "oklch(95.00% 0.00624 236.93)"
+        ]
+      },
+      "divider": {
+        "role": "neutral",
+        "displayName": "Rule Grey",
+        "tonalRamp": [
+          "oklch(15.00% 0.00560 179.44)",
+          "oklch(26.43% 0.00560 179.44)",
+          "oklch(37.86% 0.00560 179.44)",
+          "oklch(49.29% 0.00560 179.44)",
+          "oklch(60.71% 0.00560 179.44)",
+          "oklch(72.14% 0.00560 179.44)",
+          "oklch(83.57% 0.00560 179.44)",
+          "oklch(95.00% 0.00560 179.44)"
+        ]
+      },
+      "cover-rule": {
+        "role": "neutral",
+        "displayName": "Cover Rule Grey",
+        "tonalRamp": [
+          "oklch(15.00% 0.00670 182.74)",
+          "oklch(26.43% 0.00670 182.74)",
+          "oklch(37.86% 0.00670 182.74)",
+          "oklch(49.29% 0.00670 182.74)",
+          "oklch(60.71% 0.00670 182.74)",
+          "oklch(72.14% 0.00670 182.74)",
+          "oklch(83.57% 0.00670 182.74)",
+          "oklch(95.00% 0.00670 182.74)"
+        ]
+      },
+      "hover-border": {
+        "role": "neutral",
+        "displayName": "Hover Grey",
+        "tonalRamp": [
+          "oklch(15.00% 0.00913 128.60)",
+          "oklch(26.43% 0.00913 128.60)",
+          "oklch(37.86% 0.00913 128.60)",
+          "oklch(49.29% 0.00913 128.60)",
+          "oklch(60.71% 0.00913 128.60)",
+          "oklch(72.14% 0.00913 128.60)",
+          "oklch(83.57% 0.00913 128.60)",
+          "oklch(95.00% 0.00913 128.60)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Display",
+        "purpose": "Main masthead in GDI+ logical drawing units."
+      },
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Game-selection heading."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Short classic game names."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Regular launcher copy and labels."
+      },
+      "dialog": {
+        "displayName": "Native dialog",
+        "purpose": "DPI-scaled utility controls."
+      },
+      "label": {
+        "displayName": "Metadata",
+        "purpose": "Hints, version and build state."
+      }
+    },
+    "shadows": [],
+    "motion": [],
+    "breakpoints": [],
+    "native": {
+      "renderer": "Win32 and GDI+",
+      "previewPolicy": "HTML/CSS below are self-contained documentation translations of native controls, not production components or evidence of browser testing. Native OS control appearance varies with Windows theme.",
+      "layout": "Centered 1280 by 800 logical canvas, uniformly scaled and letterboxed. Minimum tracked outer window 920 by 600 logical units multiplied by DPI. No browser breakpoints.",
+      "ramps": "Synthesized OKLCH display ramps only; these are not additional production palette tokens.",
+      "interaction": "Immediate custom hover/pressed/focus states; native Windows controls retain OS interaction. No custom animation system."
+    }
+  },
+  "components": [
+    {
+      "name": "Primary launch action",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "Play or Install game for the selected title; native owner-drawn button translated for documentation.",
+      "html": "<button class=\"ds-play\">PLAY</button>",
+      "css": ".ds-play{width:284px;height:58px;padding:0 18px;text-align:left;border:0;border-radius:0;background:#ffc925;color:#111416;font:400 25px Barlow,\"Segoe UI\",sans-serif;cursor:pointer}.ds-play:hover{background:#ffc925}.ds-play:focus-visible{outline:2px solid #101315;outline-offset:-6px}.ds-play:active{background:#d69d13}"
+    },
+    {
+      "name": "Secondary settings action",
+      "kind": "button",
+      "refersTo": "button-secondary",
+      "description": "Quiet charcoal action for a native settings dialog.",
+      "html": "<button class=\"ds-settings\">Video &amp; CRT</button>",
+      "css": ".ds-settings{width:284px;height:48px;padding:0 18px;text-align:left;border:0;border-radius:0;background:#212527;color:#f4f0e2;font:400 18px Barlow,\"Segoe UI\",sans-serif;cursor:pointer}.ds-settings:hover,.ds-settings:focus-visible{background:#313535}.ds-settings:focus-visible{outline:2px solid #ffc925;outline-offset:-6px}.ds-settings:active{background:#313535}"
+    },
+    {
+      "name": "Cover selection navigation",
+      "kind": "nav",
+      "refersTo": "cover-card-selected",
+      "description": "Compact state preview of the three-cover selector. Artwork is intentionally omitted; use actual local classic covers in the native surface.",
+      "html": "<nav class=\"ds-shelf\" aria-label=\"Choose your ride\"><button class=\"ds-cover\" aria-pressed=\"true\"><span class=\"ds-cover-title\">ROAD RASH</span><span class=\"ds-cover-status\">1991 / Ready</span></button><button class=\"ds-cover\" aria-pressed=\"false\"><span class=\"ds-cover-title\">ROAD RASH II</span><span class=\"ds-cover-status\">1992 / Not installed</span></button><button class=\"ds-cover\" aria-pressed=\"false\"><span class=\"ds-cover-title\">ROAD RASH 3</span><span class=\"ds-cover-status\">1995 / Not installed</span></button></nav>",
+      "css": ".ds-shelf{display:flex;gap:28px;padding:4px;background:#101315}.ds-cover{width:164px;padding:12px;text-align:left;border:1px solid transparent;border-radius:0;background:#171a1c;color:#f4f0e2;cursor:pointer}.ds-cover-title{display:block;border-top:1px solid #484d4c;padding-top:10px;font:700 25px \"Barlow Condensed\",\"Segoe UI\",sans-serif}.ds-cover-status{display:block;margin-top:4px;color:#a6a9a3;font:400 13px Barlow,\"Segoe UI\",sans-serif}.ds-cover[aria-pressed=true]{border-color:#ffc925;background:#262a2b;color:#ffc925}.ds-cover[aria-pressed=true] .ds-cover-title{border-top:3px solid #ffc925}.ds-cover:hover{border-color:#a8aba5}.ds-cover[aria-pressed=true]:hover{border-color:#ffc925}.ds-cover:focus-visible{outline:2px solid #a8aba5;outline-offset:-3px}.ds-cover[aria-pressed=true]:focus-visible{outline-color:#ffc925}.ds-cover:active{background:#262a2b}"
+    },
+    {
+      "name": "Installer folder field",
+      "kind": "input",
+      "refersTo": "installer-field",
+      "description": "Dark editable path with a label; the production edit is a native Windows control.",
+      "html": "<label class=\"ds-path-label\">Road Rash / ROM folder<input class=\"ds-path\" type=\"text\" aria-label=\"Road Rash ROM folder\"></label>",
+      "css": ".ds-path-label{display:block;padding:8px;background:#1a1d1f;color:#e8eae9;font:400 16px Barlow,\"Segoe UI\",sans-serif}.ds-path{display:block;width:360px;height:29px;margin-top:5px;border:1px solid #484d4c;border-radius:0;background:#1a1d1f;color:#e8eae9;font:400 16px Barlow,\"Segoe UI\",sans-serif}.ds-path:hover{border-color:#a8aba5}.ds-path:focus-visible{outline:auto;outline-offset:1px}.ds-path:active{border-color:#a8aba5}"
+    },
+    {
+      "name": "Native dialog action",
+      "kind": "button",
+      "description": "OS-styled utility button; browser-native rendering is only an analogy for the native Win32 control.",
+      "html": "<button class=\"ds-native-action\">Save controls</button>",
+      "css": ".ds-native-action{min-width:128px;min-height:34px;padding:4px 12px;font:400 16px Barlow,\"Segoe UI\",sans-serif;color:ButtonText;background:ButtonFace;border:2px outset ButtonBorder}.ds-native-action:hover{filter:brightness(.98)}.ds-native-action:focus-visible{outline:auto;outline-offset:2px}.ds-native-action:active{border-style:inset}"
+    },
+    {
+      "name": "Native option selector",
+      "kind": "input",
+      "description": "Standard option selector used for player, device, resolution or music; retain native semantics.",
+      "html": "<label class=\"ds-select-label\">Player<select class=\"ds-select\"><option>Player 1</option><option>Player 2</option></select></label>",
+      "css": ".ds-select-label{display:block;padding:8px;background:#1a1d1f;color:#e8eae9;font:400 16px Barlow,\"Segoe UI\",sans-serif}.ds-select{display:block;min-width:140px;min-height:29px;margin-top:5px;font:400 16px Barlow,\"Segoe UI\",sans-serif;color:FieldText;background:Field}.ds-select:hover{cursor:default}.ds-select:focus-visible{outline:auto;outline-offset:2px}.ds-select:active{outline:auto}"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Trilogy Shelf",
+    "overview": "This descriptive label captures the incumbent system: three recognizable classic covers against a sober charcoal background, with a clear route into the selected game. It records the implemented direction rather than a separately approved concept or visual exploration.\n\nThe launcher is a native Win32 application drawn with GDI+, with standard Windows controls in its utility dialogs. Condensed headings give the games presence; regular body text keeps configuration and installation readable. The original motorcycle masthead supports the covers without becoming the primary attraction. The user-confirmed commitments are the dark background and classic covers.",
+    "keyCharacteristics": [
+      "Classic cover art leads the visual hierarchy.",
+      "Warm text and a restrained yellow accent sit on charcoal surfaces.",
+      "Square, flat controls keep the interface direct.",
+      "Native Windows interaction remains visible and usable.",
+      "English labels describe local actions and actual game readiness."
+    ],
+    "rules": [
+      {
+        "name": "The Selection Rule",
+        "body": "Yellow identifies the chosen game and the main action. Keep settings and supporting copy visually quieter.",
+        "section": "colors"
+      },
+      {
+        "name": "The Legibility Rule",
+        "body": "Condensed bold belongs to short headings and game names. Keep instructions, field values and longer text in regular Barlow.",
+        "section": "typography"
+      }
+    ],
+    "dos": [
+      "Do preserve the three-cover hierarchy and original cover proportions.",
+      "Do reserve yellow emphasis for selection and the primary action.",
+      "Do retain visible keyboard focus and native dialog navigation.",
+      "Do keep the motorcycle masthead subordinate to the games.",
+      "Do write English labels that explain the current local state."
+    ],
+    "donts": [
+      "Don't replace classic covers with generated reinterpretations.",
+      "Don't stretch or crop a cover to fill its card.",
+      "Don't introduce decorative shadows or rounded cards into the flat shell.",
+      "Don't let artwork obscure headings, status or controls.",
+      "Don't imply network play, official service unlocks or complete campaign validation."
+    ]
+  }
+}

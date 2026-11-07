@@ -1,0 +1,110 @@
+{
+  "schema": 1,
+  "downloads": [
+    {
+      "name": "python",
+      "url": "https://www.python.org/ftp/python/3.13.9/python-3.13.9-embed-amd64.zip",
+      "archive": "python-3.13.9-embed-amd64.zip",
+      "sha256": "91d828c2da3a029b41699e918674a0cb379c02cf20dab9c501306885f837402a",
+      "destination": ".tools/python",
+      "strip_top": false
+    },
+    {
+      "name": "engine",
+      "url": "https://codeload.github.com/mstan/segagenesisrecomp/zip/252535d12476f5a697cf87082ea3e827f6430a1b",
+      "archive": "segagenesisrecomp-252535d.zip",
+      "sha256": "fc3b73a13ba14886c5d36ae00c0bb660df32b330c50b1ebc8d45156819d230a5",
+      "destination": ".tools/engine",
+      "strip_top": true
+    },
+    {
+      "name": "cmake",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.5/cmake-4.4.5-windows-x86_64.zip",
+      "archive": "cmake-4.4.5-windows-x86_64.zip",
+      "sha256": "326c826486d46a23cf9d5a1c9ee3a567d427bdd02c4a34071937a2a675cff004",
+      "destination": ".tools/cmake",
+      "strip_top": false
+    },
+    {
+      "name": "ninja",
+      "url": "https://github.com/ninja-build/ninja/releases/download/v1.13.2/ninja-win.zip",
+      "archive": "ninja-win-v1.13.2.zip",
+      "sha256": "07fc8261b42b20e71d1720b39068c2e14ffcee6396b76fb7a795fb460b78dc65",
+      "destination": ".tools/ninja",
+      "strip_top": false
+    },
+    {
+      "name": "rcheevos",
+      "url": "https://codeload.github.com/RetroAchievements/rcheevos/zip/eea6461f172d37d36b0d56568f13a505e0a9fd86",
+      "archive": "rcheevos-eea6461f172d37d36b0d56568f13a505e0a9fd86.zip",
+      "sha256": "f02ffd4e247ec8cfada7c575399ac47cadb10d6d5f62b4eee1fff0fbcbfdae8d",
+      "destination": ".tools/rcheevos",
+      "strip_top": true
+    },
+    {
+      "name": "m68k-core",
+      "url": "https://codeload.github.com/mstan/m68k-recomp-core/zip/e9ebf608933969903edd80ac0b79d41ddb2f013e",
+      "archive": "m68k-core-e9ebf608933969903edd80ac0b79d41ddb2f013e.zip",
+      "sha256": "25b17e0b5a7dc8fe5aa32ee60b3b6e2cd1f44157016d69e17f11f58c56eaeeb9",
+      "destination": ".tools/engine/external/m68k-recomp-core",
+      "strip_top": true
+    },
+    {
+      "name": "z80-core",
+      "url": "https://codeload.github.com/mstan/z80-recomp-core/zip/0e6606a41245d54c5fd0c3dc322ef9d6890d3923",
+      "archive": "z80-core-0e6606a41245d54c5fd0c3dc322ef9d6890d3923.zip",
+      "sha256": "2068ca453349fa6557ec129b60d6bdfd45945a9e78765bb5e36c892eb3467e56",
+      "destination": ".tools/engine/external/z80-recomp-core",
+      "strip_top": true
+    },
+    {
+      "name": "rbengine",
+      "url": "https://codeload.github.com/RetroPortingToolKit/rbengine/zip/2a03e73693acee0fb78076ea058642c931bef12e",
+      "archive": "rbengine-2a03e73693acee0fb78076ea058642c931bef12e.zip",
+      "sha256": "3879eee1ab04bd3d36d164779acea68d0fd6eefc904c4a8d393ae41464b80e82",
+      "destination": ".tools/engine/external/rbengine",
+      "strip_top": true
+    },
+    {
+      "name": "recomp-net",
+      "url": "https://codeload.github.com/RetroPortingToolKit/recomp-net/zip/2103d5eef111ce98846f017fb12d90f5cbe763e6",
+      "archive": "recomp-net-2103d5eef111ce98846f017fb12d90f5cbe763e6.zip",
+      "sha256": "e8335433d774f6b6b8f35c8fd09e2a89a09eb87b519b0798aa8a97b0c8b8412f",
+      "destination": ".tools/engine/external/recomp-net",
+      "strip_top": true
+    },
+    {
+      "name": "librashader",
+      "url": "https://github.com/SnowflakePowered/librashader/releases/download/librashader-v0.12.0/librashader-x86_64-windows-v0.12.0-optimized.zip",
+      "archive": "librashader-0.12.0.zip",
+      "sha256": "521fe0f364bfa705883f9e99fb1733a3a24f0f403bcc5591b6b78f6cff289183",
+      "destination": ".tools/librashader",
+      "strip_top": false
+    },
+    {
+      "name": "d3dx",
+      "url": "https://api.nuget.org/v3-flatcontainer/microsoft.dxsdk.d3dx/9.29.952.8/microsoft.dxsdk.d3dx.9.29.952.8.nupkg",
+      "archive": "microsoft.dxsdk.d3dx.9.29.952.8.nupkg",
+      "sha256": "ead0906ae8a26c18a7525da7490127a2110f7c58f18293738283e30e97c6ea4b",
+      "destination": ".tools/dxsdk",
+      "strip_top": false
+    },
+    {
+      "name": "koko-aio",
+      "url": "https://codeload.github.com/kokoko3k/koko-aio-slang/zip/64f3d8338ccaf3bc4024ad01f0e6da4a10da418b",
+      "archive": "koko-aio-64f3d8338ccaf3bc4024ad01f0e6da4a10da418b.zip",
+      "sha256": "dfbc3d3741c2e2fb2e77d3a7f75d67db7b0a6cd750adf76717f1a49bc51c4ef9",
+      "destination": "assets/shaders/koko-aio",
+      "strip_top": true
+    },
+    {
+      "name": "librashader-loader",
+      "url": "https://raw.githubusercontent.com/SnowflakePowered/librashader/librashader-v0.12.0/include/librashader_ld.h",
+      "archive": "librashader_ld-v0.12.0.h",
+      "sha256": "bcffcbc854afb287c9f935c1a0e3b569f5e6775ef85914bd7f7025ad1f6bde33",
+      "destination": ".tools/librashader/include/librashader_ld.h",
+      "kind": "file",
+      "strip_top": false
+    }
+  ]
+}

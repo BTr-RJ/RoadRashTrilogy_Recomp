@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "id": "dean-harris",
+  "name": "Dean Harris Composer - remixes locais",
+  "artist": "Dean Harris Composer",
+  "game": "rr3",
+  "source_urls": [
+    "https://www.patreon.com/DeanHarrisComposer",
+    "https://www.patreon.com/DeanHarrisComposer/posts/road-rash-3-full-53364429"
+  ],
+  "runtime_status": "not_implemented",
+  "fallback": "original",
+  "tracks": []
+}

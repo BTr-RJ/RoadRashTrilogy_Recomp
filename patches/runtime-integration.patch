@@ -1,0 +1,836 @@
+--- a/runner/glue.c
++++ b/runner/glue.c
+@@ -461,10 +461,14 @@
+ static GlueYieldSite s_yield_site = GLUE_YIELD_NONE;
+ GlueYieldSite glue_yield_site(void) { return s_yield_site; }
+ 
++/* RR_GAME_IRQ_INTEGRATION: service device-polling ISRs on the game fiber. */
++static int rr_hint_latched;
++static void rr_service_pending_irq(void);
+ static void yield_to_main(GlueYieldSite site)
+ {
+     s_yield_site = site;
+     fiber_switch(s_main_fiber);
++    rr_service_pending_irq();
+ }
+ 
+ /* Engine-owned game fiber stack: fully committed, guard page below, never
+@@ -930,7 +934,7 @@
+     g_cpu.A[7] = STK;
+     g_cpu.SR = (uint16_t)((g_cpu.SR & ~0x0700u) | ((uint16_t)(level & 7) << 8));
+     s_irq_in_progress = 1;
+-    uint8_t saved_vb = vdp->in_vblank; vdp->in_vblank = 1;
++    /* RR_REAL_RASTER: scheduler owns VBlank throughout the ISR. */
+     g_rte_pending = 0; g_rte_pending_ptr = &s_rte_dummy; g_rte_pending = 0;
+     if (genesis_force_interp()) {
+         m68k_interp_run_handler(m68k_read32(level == 6 ? 0x78 : 0x70) & 0xFFFFFFu);
+@@ -938,12 +942,32 @@
+     if (level == 6) { if (g_game_spec.call_vblank) g_game_spec.call_vblank(); }
+     else            { if (g_game_spec.call_hblank) g_game_spec.call_hblank(); }
+     g_rte_pending_ptr = &s_rte_real; g_rte_pending = 0;
+-    vdp->in_vblank = saved_vb;
+     for (int i = 0; i < 256; i++) g_ram[(byteoff + i) & 0xFFFFu] = save[i];
+     g_cpu = saved;
+     recomp_interrupt_context_leave(saved_split_sp_popped);
+     s_irq_in_progress = 0;
+     s_game_yielded_vblank = 0;
++}
++
++/* Called only after the game fiber resumes from a scheduler yield. Unlike
++ * atomic ISR execution, this permits the HV counter and Z80 mailbox to change
++ * while the ISR polls them. Existing execution state/snapshots already carry
++ * s_pending_irq and s_irq_in_progress; no new machine state is introduced. */
++static void rr_service_pending_irq(void)
++{
++    if (!s_pending_irq && rr_hint_latched && !s_irq_in_progress) {
++        s_pending_irq=4; rr_hint_latched=0;
++    }
++    if (s_pending_irq && !s_irq_in_progress && !s_in_vblank_service) {
++        int level = s_pending_irq;
++        s_pending_irq = 0;
++        if (((g_cpu.SR >> 8) & 7) < level)
++            own_run_handler_interleaved(level, &g_machine.vdp);
++        else if (level == 6)
++            s_own_vint_latched = 1;
++        else if (level == 4)
++            rr_hint_latched = 1;
++    }
+ }
+ 
+ /* Own-backend interrupt delivery — the clownmdemu-free twin of
+@@ -957,7 +981,8 @@
+      * a crossing V-int and let it deliver after the current handler RTEs. (SR
+      * mask=level usually makes imask>=6 below anyway; this guards the case where
+      * the handler itself drops the mask mid-run.) */
+-    if (s_irq_in_progress) { if (level == 6) s_own_vint_latched = 1; return; }
++    if (s_irq_in_progress) { if (level == 6) s_own_vint_latched = 1; else if(level==4) rr_hint_latched=1; return; }
++    if(level==4 && ((g_cpu.SR>>8)&7)>=4) rr_hint_latched=1;
+     int imask = (g_cpu.SR >> 8) & 7;
+ 
+     if (level == 6) {
+@@ -981,7 +1006,7 @@
+              * runs at the glue_yield_for_vblank resume point. Mid-run delivery
+              * (game not parked) still uses the atomic path below — no regression
+              * for lag-frame V-ints. */
+-            if (interleave_irq_on() && s_game_yielded_vblank) {
++            if (1) { /* Every Road Rash IRQ must allow VDP/Z80 time to advance. */
+                 s_pending_irq = 6;
+                 s_game_yielded_vblank = 0;   /* let glue_run_game_chunk resume the fiber */
+             } else {
+@@ -1003,6 +1028,9 @@
+             s_own_vint_latched = 1;
+         }
+     } else if (level == 4 && imask < 4) {
++        if (s_pending_irq < 4) s_pending_irq = 4;
++        s_game_yielded_vblank = 0;
++        return; /* handled at the suspended game fiber's next resume */
+         const uint32_t STK = g_game_layout.intr_stack;
+         uint32_t byteoff = (STK - 256u) & 0xFFFFu;
+         uint8_t save[256];
+@@ -1048,7 +1076,8 @@
+      * glue_own_interrupt). Debt is still charged/drained for cycle stamping. */
+     if (((g_cpu.SR >> 8) & 7) >= 6) return 0;   /* still masked — keep latched */
+     s_own_vint_latched = 0;
+-    own_deliver_vint(vdp);
++    s_pending_irq = 6;
++    s_game_yielded_vblank = 0;
+     return 1;
+ }
+ 
+--- a/runner/sim_step.c
++++ b/runner/sim_step.c
+@@ -1,5 +1,6 @@
+ /* sim_step.c -- one simulation tick from sealed inputs (see sim_step.h). */
+ #include "sim_step.h"
++#include "game_spec.h" /* RR_FRAME_CALLBACKS */
+ 
+ #include <string.h>
+ 
+@@ -55,7 +56,9 @@
+     }
+     if (hooks->pre_raster) hooks->pre_raster(hooks->ctx);
+     glue_sched_frame_begin();        /* scheduler rule: busy-wait streaks restart */
++    if (g_game_spec.on_frame_pre) g_game_spec.on_frame_pre(s_ticks);
+     machine_run_frame(hooks->sink, hooks->sink_user);
++    if (g_game_spec.on_frame_post) g_game_spec.on_frame_post(s_ticks);
+ 
+     {
+         GenesisSimAudio scratch = { s_scratch_fm, SIM_SCRATCH_FM_FRAMES, NULL,
+--- a/runner/main.c
++++ b/runner/main.c
+@@ -30,6 +30,8 @@
+ #include "genesis_clocks.h"
+ #include "frame_pacer.h"
+ #include "audio.h"
++#include "gpu_present.h" /* RR_GPU_PRESENT */
++#include "motion_bridge.h" /* RR_MOTION_PRESENT */
+ #include "host_timing.h"
+ #include "cosim.h"
+ #include "png_write.h"
+@@ -492,6 +494,10 @@
+     } else {
+         w = s_screen_width;
+         h = display_logical_height();
++        /* MD artwork targets a 4:3 CRT: PAR 14:15, never fill-stretch. */
++        /* RR_NATIVE_ASPECT: H32 and H40 both target 4:3. */
++        w *= 4 * gvdp_output_height(&g_machine.vdp);
++        h *= 3 * gvdp_screen_width(&g_machine.vdp);
+     }
+ 
+     if (renderer != s_last_renderer || w != s_last_w || h != s_last_h) {
+@@ -2594,7 +2600,8 @@
+ 
+     /* --- Load input script (if requested) before the SDL window opens
+      * so any parse error fails fast without a flash of black window. */
+-    if (input_script_path) input_script_load(input_script_path);
++    /* RR_SCRIPT_ERRORS: an invalid explicit replay must not run attract mode. */
++    if (input_script_path && !input_script_load(input_script_path)) return 2;
+ 
+     /* --- Load symbol table for crash reports ---
+      * Look for `annotations_from_disasm.csv` adjacent to the ROM.
+@@ -2667,13 +2674,23 @@
+         win_w = ws_canvas_w() * win_scale;
+         win_h = win_w * WS_ASPECT_H / WS_ASPECT_W;   /* true 16:9 */
+     }
++    /* RR_OUTPUT_SIZE: explicit output dimensions selected in the trilogy launcher.
++     * Native rendering remains at console resolution until its custom renderer
++     * is enabled; the SDL target controls output scaling and letterboxing. */
++    {
++        const char *rw=getenv("RR_OUTPUT_WIDTH"), *rh=getenv("RR_OUTPUT_HEIGHT");
++        if (rw && rh) {
++            int w=atoi(rw), h=atoi(rh);
++            if (w>=320 && w<=7680 && h>=224 && h<=4320) { win_w=w; win_h=h; }
++        }
++    }
+     /* Scripted launcher tests must stay hidden after the handoff to gameplay. */
+-    int test_hidden = getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN");
++    int test_hidden = getenv("RR_TEST_HIDDEN") || (getenv("LNG_SCRIPT") && getenv("LNG_TEST_HIDDEN"));
+     Uint32 win_flags = ((benchmark_frames || test_hidden) ? SDL_WINDOW_HIDDEN : SDL_WINDOW_SHOWN)
+                      | SDL_WINDOW_RESIZABLE;
+     /* Launcher tri-state: 1 = borderless (desktop resolution, letterboxed by
+      * SDL_RenderSetLogicalSize), 2 = exclusive (real mode change). */
+-    if (!benchmark_frames) {
++    if (!benchmark_frames && !test_hidden) {
+         if (g_app_config.fullscreen == 2)      win_flags |= SDL_WINDOW_FULLSCREEN;
+         else if (g_app_config.fullscreen == 1) win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+     }
+@@ -3161,6 +3178,8 @@
+ #endif
+             if (ev.type == SDL_QUIT) { running = 0; window_close_requested = 1; break; }
+             if (ev.type == SDL_KEYDOWN) {
++                extern int rr_game_key(int); /* RR_GAME_KEYS */
++                if(!ev.key.repeat && rr_game_key((int)ev.key.keysym.sym)) continue;
+                 if (!ev.key.repeat && !(ev.key.keysym.mod & (KMOD_SHIFT | KMOD_CTRL)) &&
+                     ev.key.keysym.sym == SDLK_F7) {
+                     overlay_request = 2; continue;
+@@ -3591,6 +3610,7 @@
+                 fprintf(stderr, "[input_script] exiting per script directive (code=%d)\n",
+                         input_script_exit_code());
+                 if (s_sram_dirty) runner_sram_flush();
++                audio_wav_stop(); /* finalize PCM evidence on scripted exit */
+                 return input_script_exit_code();
+             }
+         }
+@@ -3642,10 +3662,10 @@
+         /* Upload framebuffer to GPU texture. When a present-time color model
+          * is enabled, transform a COPY into s_present_buf and upload that —
+          * s_framebuf (the verified/hashed raw VDP output) is never modified. */
+-        if (!benchmark_frames) {
+-        const uint32_t *present_src = s_framebuf;
++        if (!benchmark_frames || getenv("RR_PRESENT_PROBE")) {
++        const uint32_t *present_src = rr_motion_present(s_framebuf,s_frame_stride,s_screen_width,s_screen_height,frame_num);
+         if (s_color_lut_on) {
+-            color_lut_map_frame(&s_color_lut, s_framebuf, s_present_buf,
++            color_lut_map_frame(&s_color_lut, present_src, s_present_buf,
+                                 s_screen_width, s_screen_height,
+                                 MAX_SCREEN_WIDTH);
+             present_src = s_present_buf;
+@@ -3747,6 +3767,8 @@
+             }
+         }
+         FRAME_PHASE(8);
++        rr_gpu_present(renderer,present_src,s_frame_stride,s_screen_width,s_screen_height,gvdp_screen_width(&g_machine.vdp),frame_num);
++        rr_present_capture(renderer,frame_num); /* RR_CAPTURE_PRESENT */
+         SDL_RenderPresent(renderer);
+ #if GENESIS_HAS_RECOMP_NET
+         if (!genesis_netplay_active())
+@@ -3960,6 +3982,7 @@
+     if (s_framebuf != s_native_storage) free(s_framebuf);
+     if (s_present_buf != s_present_storage) free(s_present_buf);
+     gamepad_shutdown();
++    rr_gpu_shutdown();
+     SDL_DestroyRenderer(renderer);
+     SDL_DestroyWindow(window);
+     SDL_Quit();
+--- a/runner/video/genesis_vdp.c
++++ b/runner/video/genesis_vdp.c
+@@ -12,6 +12,7 @@
+  * chapter, Charles MacDonald's "genvdp.txt" hardware notes, and VDP test ROMs.
+  */
+ #include "genesis_vdp.h"
++#include <math.h>
+ #include <string.h>
+ #ifndef GENESIS_BATCHED_PLANES
+ #define GENESIS_BATCHED_PLANES 0
+@@ -433,15 +434,30 @@
+      * on the H-blank flag (e.g. Sonic 1's SEGA-chant DAC feeder, which polls
+      * $C00004 bit 2 between samples) make progress under our per-whole-line
+      * renderer instead of spinning forever. */
+-    v->in_hblank ^= 1;
++    /* RR: status reads must not manufacture HBlank edges. */
+     return s;
+ }
+ 
+ uint16_t gvdp_read_hv_counter(const GVDP *v)
+ {
+-    /* Approximate: V counter in the high byte, H counter low. Refined during
+-     * raster-timing validation. */
+-    return (uint16_t)(((v->scanline & 0xFF) << 8) | (v->in_hblank ? 0x00 : 0x80));
++    /* RR: NTSC 224-line vertical discontinuity; the old 0/0x80 horizontal
++     * value cannot satisfy Road Rash's horizontal-counter polling loops.
++     * Approximate the horizontal phase from the 68K cycle axis. The H40
++     * irregular pixel clock and HV latch still need hardware-level validation. */
++    extern uint32_t rr_raster_phase(void); /* RR_PHYSICAL_HV */
++    unsigned phase=rr_raster_phase();
++    unsigned vertical=(unsigned)v->scanline+phase/3420u;
++    phase%=3420u;
++    if (vertical > 0xEAu) vertical -= 6u;
++    unsigned count, horizontal;
++    if (v->reg[12] & 1u) {
++        count = phase * 211u / 3420u;
++        horizontal = count <= 0xB6u ? count : count + 0x2Du;
++    } else {
++        count = phase * 171u / 3420u;
++        horizontal = count <= 0x93u ? count : count + 0x55u;
++    }
++    return (uint16_t)(((vertical & 0xFFu) << 8) | (horizontal & 0xFFu));
+ }
+ 
+ /* ---- Per-scanline timing -------------------------------------------------- */
+@@ -493,6 +509,33 @@
+ static int s_unlimited_sprites;
+ void gvdp_set_unlimited_sprites(int enabled) { s_unlimited_sprites=!!enabled; }
+ int  gvdp_unlimited_sprites(void) { return s_unlimited_sprites; }
++/* RR_VISUAL_SPRITES */
++static GVDPVisualSprite s_visual_sprites;
++static void *s_visual_user;
++static int s_visual_pass;
++/* RR_VISUAL_AUDIT */
++static GVDPVisualAudit s_visual_audit;
++static void *s_visual_audit_user;
++static uint8_t s_spr_owner[GVDP_MAX_WIDTH],s_visible_owner[GVDP_MAX_WIDTH];
++void gvdp_set_visual_audit(GVDPVisualAudit audit,void *user)
++{s_visual_audit=audit;s_visual_audit_user=user;}
++/* RR_WORLD_SURFACE */
++static GVDPVisualSurface s_visual_surface;
++static void *s_visual_surface_user;
++void gvdp_set_visual_surface(GVDPVisualSurface draw,void *user)
++{s_visual_surface=draw;s_visual_surface_user=user;}
++/* RR_SOURCE_OBJECTS */
++static GVDPHostSprites s_visual_objects;
++static void *s_visual_objects_user;
++void gvdp_set_visual_objects(GVDPHostSprites draw,void *user)
++{s_visual_objects=draw;s_visual_objects_user=user;}
++/* RR_VISUAL_SCROLL */
++static GVDPVisualScroll s_visual_scroll;
++static void *s_visual_scroll_user;
++void gvdp_set_visual_scroll(GVDPVisualScroll transform,void *user)
++{s_visual_scroll=transform;s_visual_scroll_user=user;}
++void gvdp_set_visual_sprites(GVDPVisualSprite transform,void *user)
++{ s_visual_sprites=transform;s_visual_user=user; }
+ static GVDPHostSprites s_host_sprites;
+ static void *s_host_sprites_user;
+ static uint32_t s_host_palette[GVDP_HOST_PALETTE_SIZE];
+@@ -574,6 +617,9 @@
+     if (e > max_e) e = max_e;
+     return e;
+ }
++
++static int rr_road_profile;
++void gvdp_set_road_profile(int profile){rr_road_profile=profile;}
+ 
+ void gvdp_set_ws_extra(int extra_px) { s_ws_extra = extra_px; }
+ 
+@@ -632,6 +678,7 @@
+      * `offset` = output column that authentic screen column 0 maps to (centers
+      * the view in the canvas). */
+     memset(s_spr_op, 0, (size_t)total);
++    memset(s_spr_owner,0,(size_t)total);
+     memset(s_spr_shadow_op, 0, (size_t)total);
+     memset(s_spr_hilite_op, 0, (size_t)total);
+ 
+@@ -642,7 +689,7 @@
+     int sh_mode       = MODE4_SHI(v) != 0;
+     int cell_h_shift  = im2 ? 4 : 3;          /* cell height 16 or 8 px        */
+     int tile_bytes    = im2 ? 64 : 32;
+-    uint16_t sat = (uint16_t)((REG_SPRITE_NT(v) & 0x7F) << 9);
++    uint16_t sat = (uint16_t)((REG_SPRITE_NT(v) & (h40 ? 0x7E : 0x7F)) << 9);
+ 
+     /* Tracks the first opaque sprite owner per pixel (first-wins; a second
+      * opaque hit raises the collision flag). */
+@@ -653,7 +700,7 @@
+ 
+     for (int n = 0; n < max_sprites; n++) {
+         uint16_t e = (uint16_t)(sat + link * 8);
+-        int y      = (vram_read_word(v, e) & 0x3FF) - (im2 ? 256 : 128);
++        int y      = (vram_read_word(v, e) & (im2 ? 0x3FF : 0x1FF)) - (im2 ? 256 : 128);
+         uint8_t sz = v->vram[(uint16_t)(e + 2)];
+         unsigned pattern_bytes;
+         const uint8_t *patterns=gvdp_sprite_patterns(sz,&pattern_bytes);
+@@ -661,6 +708,44 @@
+         int vsz    = (sz & 3) + 1;            /* height in cells (1..4)        */
+         int height = vsz << cell_h_shift;
+         int next   = v->vram[(uint16_t)(e + 3)] & 0x7F;
++
++        double rectangle[4];
++        if(s_visual_pass && s_visual_sprites && !im2 &&
++           s_visual_sprites(s_visual_user,v,(unsigned)link,rectangle)) {
++            double left=rectangle[0]+offset,top=rectangle[1];
++            double right=rectangle[2]+offset,bottom=rectangle[3];
++            int source_width=hsz*8,source_height=vsz*8;
++            if(isfinite(left)&&isfinite(top)&&isfinite(right)&&isfinite(bottom)&&
++               right>left&&bottom>top&&right-left<2048&&bottom-top<2048&&
++               line+.5>=top&&line+.5<bottom) {
++                uint16_t attr=vram_read_word(v,(uint16_t)(e+4));
++                int tile=attr&2047,pal=(attr>>13)&3,pri=(attr>>15)&1;
++                int hf=(attr&0x0800)!=0,vf=(attr&0x1000)!=0;
++                int source_y=(int)floor((line+.5-top)*source_height/(bottom-top));
++                if(vf)source_y=source_height-1-source_y;
++                int begin=(int)fmax(0,ceil(left-.5)),end=(int)fmin(total,ceil(right-.5));
++                for(int sx=begin;sx<end;++sx) {
++                    if(drawn[sx])continue;
++                    int source_x=(int)floor((sx+.5-left)*source_width/(right-left));
++                    if(hf)source_x=source_width-1-source_x;
++                    if(source_x<0||source_x>=source_width||source_y<0||source_y>=source_height)continue;
++                    unsigned tileno=(tile+(source_x>>3)*vsz+(source_y>>3))&2047;
++                    unsigned address=tileno*32+(source_y&7)*4+((source_x&7)>>1);
++                    unsigned byte=patterns?(address<pattern_bytes?patterns[address]:0):v->vram[(uint16_t)address];
++                    unsigned nib=(byte>>((source_x&1)?0:4))&15;
++                    if(!nib)continue;
++                    if(sh_mode&&pal==3&&nib==14)s_spr_hilite_op[sx]=1;
++                    else if(sh_mode&&pal==3&&nib==15)s_spr_shadow_op[sx]=1;
++                    else {
++                        int ext=pal==0?gvdp_sprite_pattern_line(sz,tileno):0;
++                        s_spr_idx[sx]=ext?(uint8_t)(GVDP_HOST_PALETTE_BASE+(ext-1)*16+nib):(uint8_t)(pal*16+nib);
++                        s_spr_op[sx]=1;s_spr_owner[sx]=(uint8_t)(link+1);s_spr_hi[sx]=(uint8_t)pri;drawn[sx]=1;
++                    }
++                }
++            }
++            if(!next)break;
++            link=next;continue;
++        }
+ 
+         if (line >= y && line < y + height) {
+             if (++on_line > max_per_line && !s_unlimited_sprites) { v->sprite_overflow = 1; break; }
+@@ -674,7 +759,7 @@
+              * bit 9 (max sprite X ~480), so this is identical there. The game's
+              * BuildSprites/Render_Sprites must likewise mask to $3FF in
+              * widescreen so the high bit survives to the sprite table. */
+-            int xword     = vram_read_word(v, (uint16_t)(e + 6)) & 0x3FF;
++            int xword     = vram_read_word(v, (uint16_t)(e + 6)) & 0x1FF;
+             int screen_x  = xword - 128 + offset;  /* +offset: center in the output canvas */
+ 
+             /* Sprite masking: an x==0 sprite after another on-line sprite
+@@ -720,7 +805,7 @@
+                     else {
+                         s_spr_idx[sx] = ext?(uint8_t)(GVDP_HOST_PALETTE_BASE+(ext-1)*16+nib)
+                                           :(uint8_t)(pal*16+nib);
+-                        s_spr_op[sx] = 1;
++                        s_spr_op[sx] = 1;s_spr_owner[sx]=(uint8_t)(link+1);
+                         s_spr_hi[sx] = (uint8_t)pri;
+                         drawn[sx] = 1;
+                     }
+@@ -750,7 +835,7 @@
+                     int ext = pal == 0 ? gvdp_sprite_pattern_line(sz,(unsigned)tileno) : 0;
+                     s_spr_idx[sx] = ext ? (uint8_t)(GVDP_HOST_PALETTE_BASE + (ext - 1) * 16 + nib)
+                                         : (uint8_t)(pal * 16 + nib);
+-                    s_spr_op[sx]  = 1;
++                    s_spr_op[sx]  = 1;s_spr_owner[sx]=(uint8_t)(link+1);
+                     s_spr_hi[sx]  = (uint8_t)pri;
+                     drawn[sx] = 1;
+                 }
+@@ -770,7 +855,7 @@
+ {
+     if (!gvdp_display_enabled(v)) return;
+     int w = gvdp_screen_width(v);
+-    int total = gvdp_active_width(v);
++    int total = w; /* RR: replay evaluates authentic sprite status. */
+     /* Same centered authentic origin as gvdp_render_scanline, including an
+      * odd-width canvas. Do not substitute native width: the existing sprite
+      * pixel budget and clipping use the complete output width. */
+@@ -877,8 +962,9 @@
+  * per raster line. Raster-indexed lookups (hscroll table, window boundary)
+  * use the raster line; plane/sprite vertical addressing runs in double-res
+  * space with 8x16 cells. */
+-int gvdp_render_scanline(GVDP *v, int line, uint8_t *out)
+-{
++static int rr_render_scanline(GVDP *v, int line, uint8_t *out)
++{
++    if(s_visual_audit)memset(s_visible_owner,0,sizeof s_visible_owner);
+     int w = gvdp_screen_width(v);
+     int content_extra = clamp_ws_extra(w);  /* genuine widened content per side; 0 = authentic */
+     int content_block = w + 2 * content_extra;
+@@ -929,6 +1015,12 @@
+     int vs_mask = im2 ? 0x7FF : 0x3FF;
+     int full_vs_a = v->vsram[0] & vs_mask;
+     int full_vs_b = v->vsram[1] & vs_mask;
++    if(s_visual_pass&&s_visual_scroll&&!im2&&!vmode_2cell){
++        int values[4]={hs_a,hs_b,full_vs_a,full_vs_b};
++        if(s_visual_scroll(s_visual_scroll_user,v,line,values)){
++            hs_a=values[0];hs_b=values[1];full_vs_a=values[2];full_vs_b=values[3];
++        }
++    }
+ 
+     /* These registers cannot change while a completed scanline is rendered.
+      * Resolve their row-invariant portions once rather than once per pixel. */
+@@ -941,6 +1033,10 @@
+ 
+     /* Sprite layer for this output row (placed in centered output-column space). */
+     sprite_render_line(v, line, total, offset);
++    if(s_visual_pass&&s_visual_objects){
++        GVDPSpriteLayer layer={line,total,offset,s_spr_idx,s_spr_op,s_spr_hi,s_spr_owner};
++        s_visual_objects(s_visual_objects_user,v,&layer);
++    }
+     if (s_host_sprites) {
+         GVDPSpriteLayer layer = { line, total, offset, s_spr_idx, s_spr_op, s_spr_hi };
+         s_host_sprites(s_host_sprites_user, v, &layer);
+@@ -986,6 +1082,20 @@
+     if (pillar > 0) memset(out, bar_idx, (size_t)pillar);
+     if (right_bar > 0) memset(out + content_end, bar_idx, (size_t)right_bar);
+ 
++#if !GENESIS_BATCHED_PLANES
++    int rr_ground_a=0,rr_ground_b=0;
++    if((rr_road_profile==1||rr_road_profile==2)&&s_visual_pass&&(s_visual_surface||content_extra)&&
++       wt==128&&base_a==0x4000&&base_b==0x6000&&hmode==3&&!im2&&!vmode_2cell&&line<152){
++        rr_ground_a=rr_ground_b=1;
++        for(int n=0;n<8;++n){
++            uint8_t idx;int op,hi;
++            fetch_plane_pixel(v,&cache_a,base_a,wt,ht,480+n,line+full_vs_a,im2,&idx,&op,&hi);
++            rr_ground_a&=op&&(idx==58||idx==59);
++            fetch_plane_pixel(v,&cache_b,base_b,wt,ht,480+n,line+full_vs_b,im2,&idx,&op,&hi);
++            rr_ground_b&=op&&(idx==58||idx==59);
++        }
++    }
++#endif
+     for (int x = -content_extra, xo = content_start; xo < content_end; x++, xo++) {
+ #if GENESIS_BATCHED_PLANES
+         uint8_t a_idx = plane_a[xo] & 0x3f, b_idx = plane_b[xo] & 0x3f;
+@@ -1023,8 +1133,46 @@
+         /* Plane B. */
+         fetch_plane_pixel(v, &cache_b, base_b, wt, ht,
+                           (x - hs_b), (line + vs_b), im2, &b_idx, &b_op, &b_hi);
++        /* RR_ROAD_STRIPS: RR2/3's 1024px plane is a finite road bitmap,
++         * not a periodically tiled world. Native road generators $14822 /
++         * $1A028 offset their edges by 672. Expanding a modulo-1024 fetch
++         * wraps the opposite edge back into view in strong curves.
++         * Preserve signed source coordinates, discard the repeated asphalt,
++         * and continue the authored ground tile at its 8px phase. Sky and
++         * native columns keep the hardware sampling rules. */
++        int raw_a=(int16_t)vram_read_word(v,(uint16_t)(hbase+hidx*4));
++        int raw_b=(int16_t)vram_read_word(v,(uint16_t)(hbase+hidx*4+2));
++        if(rr_road_profile>=2 && wt==128 && base_a==0x4000 && base_b==0x6000 &&
++           hmode==3 && !im2 && (x<0 || x>=w) && line<152 &&
++           raw_a>=-1024 && raw_a<=-352 && raw_b>=512 && raw_b<=1088) {
++            int ax=x-raw_a,bx=x-raw_b+1024;
++            if(ax<320 || ax>=704){a_idx=0;a_op=0;a_hi=0;}
++            if(bx<320){b_idx=0;b_op=0;b_hi=0;}
++            else if(bx>=672)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
++                640+(bx&7),line+vs_b,im2,&b_idx,&b_op,&b_hi);
++        }
+ #endif
+ 
++#if !GENESIS_BATCHED_PLANES
++        /* RR_FINITE_PAIR: each bitmap contributes ONE outward half.
++         * The opposite half must never wrap back into the road or margins. */
++        if((rr_ground_a||rr_ground_b)&&s_visual_pass&&(s_visual_surface||x<0||x>=w)){
++            int sa=raw_a+(((hs_a-raw_a+512)&1023)-512);
++            int sb=raw_b+(((hs_b-raw_b+512)&1023)-512);
++            int ax=x-sa+(rr_road_profile==1?1024:0);
++            int bx=x-sb+(rr_road_profile==1?0:1024);
++            if(rr_ground_a){
++                if(ax<512)fetch_plane_pixel(v,&cache_a,base_a,wt,ht,
++                    480+(ax&7),line+vs_a,im2,&a_idx,&a_op,&a_hi);
++                else if(ax>=704){a_idx=0;a_op=0;a_hi=0;}
++            }
++            if(rr_ground_b){
++                if(bx>=512)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
++                    480+(bx&7),line+vs_b,im2,&b_idx,&b_op,&b_hi);
++                else if(bx<320){b_idx=0;b_op=0;b_hi=0;}
++            }
++        }
++#endif
+         /* Sprite layer (indexed in output-column space). */
+         int s_op = s_spr_op[xo], s_hi = s_spr_hi[xo];
+         uint8_t s_idx = s_spr_idx[xo];
+@@ -1048,6 +1196,12 @@
+         else                   px = backdrop;
+ #endif
+ 
++        if(s_visual_audit)s_visible_owner[xo]=
++            s_op&&(s_hi||!((a_op&&a_hi)||(b_op&&b_hi)))?s_spr_owner[xo]:0;
++        if(s_visual_pass&&s_visual_surface&&
++           !(s_op&&(s_hi||!((a_op&&a_hi)||(b_op&&b_hi)))))
++            px=(uint8_t)s_visual_surface(s_visual_surface_user,v,line,x,px);
++
+         /* Shadow/highlight: when enabled, a pixel with no high-priority layer
+          * is shadowed; operator sprites (pal3 colours 14/15) force highlight or
+          * shadow on the underlying pixel. */
+@@ -1074,3 +1228,23 @@
+     }
+     return total;
+ }
++
++/* RR_WIDE_CANON: guest status always comes from native SAT geometry.
++ * RR_VISUAL_SPRITES applies object rectangles only in the second pass. */
++int gvdp_render_scanline(GVDP *v,int line,uint8_t *out) {
++    int extra=s_ws_extra,canvas=s_ws_canvas_w;
++    if(extra<=0&&canvas<=0&&!s_visual_sprites&&!s_visual_scroll&&!s_visual_objects&&!s_visual_surface)return rr_render_scanline(v,line,out);
++    uint8_t native[GVDP_MAX_WIDTH];
++    s_visual_pass=0;s_ws_extra=0;s_ws_canvas_w=0;
++    int width=rr_render_scanline(v,line,native);
++    uint8_t owners[GVDP_MAX_WIDTH];
++    if(s_visual_audit)memcpy(owners,s_visible_owner,(size_t)width);
++    uint8_t collision=v->sprite_collision,overflow=v->sprite_overflow;
++    s_ws_extra=extra;s_ws_canvas_w=canvas;s_visual_pass=1;
++    int total=rr_render_scanline(v,line,out);
++    s_visual_pass=0;
++    if(!s_visual_sprites&&!s_visual_scroll&&!s_visual_objects&&!s_visual_surface)memcpy(out+(total-width)/2,native,(size_t)width);
++    v->sprite_collision=collision;v->sprite_overflow=overflow;
++    if(s_visual_audit){GVDPVisualAuditRow row={line,width,total,(total-width)/2,native,owners,out,s_visible_owner};s_visual_audit(s_visual_audit_user,v,&row);}
++    return total;
++}
+--- a/runner/video/genesis_vdp.h
++++ b/runner/video/genesis_vdp.h
+@@ -125,6 +125,7 @@
+     uint8_t *index;   /* CRAM 0..63, or GVDP_HOST_PALETTE_BASE + host slot */
+     uint8_t *opaque;
+     uint8_t *high;    /* sprite priority bit */
++    uint8_t *owner;   /* optional SAT order: 1..80; lower draws first */
+ } GVDPSpriteLayer;
+ typedef void (*GVDPHostSprites)(void *user, const struct GVDP *v,
+                                 const GVDPSpriteLayer *layer);
+@@ -163,6 +164,33 @@
+ int gvdp_sprite_pattern_line(unsigned size_flags, unsigned tile);
+ /* Read-only color table for index-to-ARGB sinks; NULL when disabled. */
+ const uint32_t *gvdp_host_palette(void);
++
++/* RR_VISUAL_SPRITES: continuous object rectangles in native screen units.
++ * The callback runs only in the presentation pass. Original SAT evaluation
++ * still supplies every guest collision/overflow flag. No hardware memory is
++ * changed, including X/Y, size, tiles, palette and links. */
++typedef int (*GVDPVisualSprite)(void *user,const struct GVDP *v,
++                              unsigned sat_index,double bounds[4]);
++void gvdp_set_visual_sprites(GVDPVisualSprite transform,void *user);
++/* Full source-art billboards, only in the visual pass. */
++void gvdp_set_visual_objects(GVDPHostSprites draw,void *user);
++
++/* Presentation-only tile-plane coordinates: hscroll A/B, vscroll A/B.
++ * Only the presentation pass consumes these values; register/RAM reads and
++ * authentic raster evaluation retain the guest values. */
++typedef int (*GVDPVisualScroll)(void *user,const struct GVDP *v,int line,int values[4]);
++void gvdp_set_visual_scroll(GVDPVisualScroll transform,void *user);
++
++/* Material sampling before composition; never invoked on a visible sprite. */
++typedef int (*GVDPVisualSurface)(void *user,const struct GVDP *v,int line,int x,int index);
++void gvdp_set_visual_surface(GVDPVisualSurface draw,void *user);
++
++typedef struct GVDPVisualAuditRow {
++    int line,native_width,total,offset;
++    const uint8_t *native_index,*native_owner,*index,*owner;
++} GVDPVisualAuditRow;
++typedef void (*GVDPVisualAudit)(void *user,const struct GVDP *v,const GVDPVisualAuditRow *row);
++void gvdp_set_visual_audit(GVDPVisualAudit audit,void *user);
+ 
+ /* ---- 68K port interface ($C00000 data, $C00004 control) ------------------ */
+ void     gvdp_write_data   (GVDP *v, uint16_t value);
+--- a/runner/video/genesis_machine.c
++++ b/runner/video/genesis_machine.c
+@@ -434,6 +434,7 @@
+ #else
+         m->z80.int_pending ? 1 : 0;
+ #endif
++    uint32_t slice_master_start = s_z80_off; /* RR sub-scanline arbitration */
+     uint32_t done = m->z80_cycle_debt;
+ #ifndef GENESIS_Z80_RECOMP
+     m->z80.cyc = 0;            /* per-slice t-state counter (kept bounded) */
+@@ -441,7 +442,7 @@
+     while (done < target) {
+         /* Stamp chip writes made by this instruction at its start cycle
+          * (master) — machine_z80_stamp() reads this for the event queue. */
+-        s_z80_off = done * MASTER_PER_Z80;
++        s_z80_off = slice_master_start + done * MASTER_PER_Z80;
+ #ifdef GENESIS_Z80_RECOMP
+         done += z80_recomp_step_one();
+ #else
+@@ -466,6 +467,13 @@
+ #endif
+ }
+ 
++/* RR_RASTER_PHASE: physical raster time, independent of codegen accounting. */
++extern uint32_t g_audio_cycle_counter;
++static uint32_t rr_slice_cpu, rr_slice_phase;
++uint32_t rr_raster_phase(void) {
++    extern uint32_t g_audio_cycle_counter;
++    return rr_slice_phase + (g_audio_cycle_counter-rr_slice_cpu)*7u;
++}
+ void machine_run_frame(GenesisScanlineSink sink, void *user)
+ {
+     GenesisMachine *m = &g_machine;
+@@ -479,21 +487,16 @@
+         s_line_base = (uint32_t)line * MASTER_PER_LINE;
+         s_z80_off   = 0;   /* 68K writes during the chunk below land at the line start */
+ 
+-        /* Advance the recompiled 68K ~one scanline (it parks at WaitForVBlank). */
+-        glue_run_game_chunk(M68K_PER_LINE);
+-
+-        /* If a prior V-int was latched while the 68K had IRQs masked (e.g. a
+-         * move #$2700,sr screen transition), deliver it now that the chunk above
+-         * may have dropped the mask — keeps v_vblank_count in step with the
+-         * oracle instead of losing the masked V-int. */
+-        glue_own_vint_service_latched(&m->vdp);
+-
+-        /* Step the Z80 (SMPS driver) for its share of the line. */
+-        step_z80(m, Z80_PER_LINE);
+-
++        uint16_t rr_latched_vsram[GVDP_VSRAM_ENTRIES];
++        memcpy(rr_latched_vsram,m->vdp.vsram,sizeof rr_latched_vsram);
++        for (unsigned slice=0;slice<8;++slice) {
++        rr_slice_phase=slice*MASTER_PER_LINE/8u;
++        rr_slice_cpu=g_audio_cycle_counter;
++        m->vdp.in_hblank=slice>=6;
++        if(slice==0 || slice==6) {
+         /* Deliver interrupts to the 68K (and the Z80 at vblank). */
+-        if (irq & GVDP_IRQ_HBLANK) glue_own_interrupt(4, &m->vdp);
+-        if (irq & GVDP_IRQ_VBLANK) {
++        if (slice==6 && (irq & GVDP_IRQ_HBLANK)) glue_own_interrupt(4, &m->vdp);
++        if (slice==0 && (irq & GVDP_IRQ_VBLANK)) {
+             /* Assert the Z80 vblank IRQ and LEAVE it pending — the Z80 takes it
+              * on a later step_z80 (when IFF1 is enabled) and superzazu clears
+              * int_pending on accept. The old code de-asserted immediately with
+@@ -523,6 +526,8 @@
+             glue_own_interrupt(6, &m->vdp);
+         }
+ 
++        }
++        if(slice==6) {
+         /* Render + emit active scanlines. In interlace mode 2 each raster
+          * line yields TWO output rows (the even and odd fields' lines,
+          * rendered progressively into a 448-row frame). */
+@@ -542,7 +547,11 @@
+                     gvdp_evaluate_scanline(&m->vdp, row);
+                     continue;
+                 }
++                uint16_t rr_live_vsram[GVDP_VSRAM_ENTRIES];
++                memcpy(rr_live_vsram,m->vdp.vsram,sizeof rr_live_vsram);
++                memcpy(m->vdp.vsram,rr_latched_vsram,sizeof rr_latched_vsram);
+                 int n = gvdp_render_scanline(&m->vdp, row, idxbuf);
++                memcpy(m->vdp.vsram,rr_live_vsram,sizeof rr_live_vsram);
+                 const uint32_t *host_palette = gvdp_host_palette();
+                 if (host_palette)
+                     memcpy(s_cram_argb + GVDP_HOST_PALETTE_BASE, host_palette,
+@@ -556,6 +565,12 @@
+             }
+         }
+ 
++        }
++        s_z80_off=rr_slice_phase;
++        glue_run_game_chunk((slice+1u)*M68K_PER_LINE/8u-slice*M68K_PER_LINE/8u);
++        glue_own_vint_service_latched(&m->vdp);
++        step_z80(m,(slice+1u)*Z80_PER_LINE/8u-slice*Z80_PER_LINE/8u);
++        }
+         m->master_cycle += MASTER_PER_LINE;
+     }
+     g_snd_frame++;   /* [SND-TRACE] */
+--- a/runner/input_map.h
++++ b/runner/input_map.h
+@@ -55,6 +55,8 @@
+ typedef struct PlayerInput {
+     int         device;            /* InputDevice */
+     int         pad_type;          /* PadType */
++    int         controller_slot; /* physical SDL plug-order slot */
++    int         analog_dpad; /* left stick convenience, 0 disables */
+     int         deadzone_pct;      /* 0..100 (stick analog deadzone) */
+     int         key[GB_COUNT];     /* SDL_Scancode per button (0 = unbound) */
+     GamepadBind pad[GB_COUNT];     /* gamepad binding per button */
+--- a/runner/input_map.c
++++ b/runner/input_map.c
+@@ -48,7 +48,7 @@
+      * launcher/settings.ini device choice still overrides this default. */
+     p1->device       = INPUT_DEV_KEYBOARD | INPUT_DEV_GAMEPAD;
+     p1->pad_type     = PAD_3BUTTON;
+-    p1->deadzone_pct = 25;
++    p1->deadzone_pct = 25; p1->controller_slot=0; p1->analog_dpad=1;
+     /* Keyboard arrows + Z/X/C + Return (the existing main.c mapping), plus
+      * A/S/D/Tab for the 6-button extension. Gamepad: d-pad + A/B/X/Start, with
+      * Y/LB/RB/Back for X/Y/Z/Mode. */
+@@ -71,7 +71,7 @@
+     PlayerInput *p2 = &g_input_map.p[1];
+     p2->device       = INPUT_DEV_NONE;   /* 2-player is opt-in (no regression) */
+     p2->pad_type     = PAD_3BUTTON;
+-    p2->deadzone_pct = 25;
++    p2->deadzone_pct = 25; p2->controller_slot=1; p2->analog_dpad=1;
+     /* A usable right-hand keyboard set + second gamepad, ready when the user
+      * enables P2 in the launcher. */
+     set_btn(p2, GB_UP,    SDL_SCANCODE_I,      SDL_CONTROLLER_BUTTON_DPAD_UP);
+@@ -88,7 +88,7 @@
+     set_btn(p2, GB_MODE,  SDL_SCANCODE_SLASH,  SDL_CONTROLLER_BUTTON_BACK);
+     for (int p = 2; p < INPUT_MAX_PLAYERS; ++p) {
+         g_input_map.p[p] = *p1;
+-        g_input_map.p[p].device = INPUT_DEV_GAMEPAD;
++        g_input_map.p[p].device = INPUT_DEV_GAMEPAD; g_input_map.p[p].controller_slot=p;
+         memset(g_input_map.p[p].key, 0, sizeof g_input_map.p[p].key);
+     }
+ }
+--- a/runner/app_config.c
++++ b/runner/app_config.c
+@@ -155,6 +155,8 @@
+             if      (!strcmp(key, "device"))   pi->device       = atoi(val);
+             else if (!strcmp(key, "pad_type")) pi->pad_type     = atoi(val);
+             else if (!strcmp(key, "deadzone")) pi->deadzone_pct = atoi(val);
++            else if (!strcmp(key, "controller")) pi->controller_slot = atoi(val);
++            else if (!strcmp(key, "analog_dpad")) pi->analog_dpad = atoi(val)!=0;
+             else if (!strncmp(key, "key.", 4)) {
+                 GenesisButton b = button_by_name(key + 4);
+                 if (b < GB_COUNT) pi->key[b] = atoi(val);
+@@ -177,6 +179,7 @@
+     fprintf(f, "device = %d        ; 0 none, 1 keyboard, 2 gamepad, 3 both\n", pi->device);
+     fprintf(f, "pad_type = %d      ; 0 = 3-button, 1 = 6-button\n", pi->pad_type);
+     fprintf(f, "deadzone = %d\n", pi->deadzone_pct);
++    fprintf(f, "controller = %d\nanalog_dpad = %d\n",pi->controller_slot,pi->analog_dpad);
+     for (int b = 0; b < GB_COUNT; b++)
+         fprintf(f, "key.%s = %d\n", input_button_name((GenesisButton)b), pi->key[b]);
+     for (int b = 0; b < GB_COUNT; b++) {
+--- a/runner/gamepad.c
++++ b/runner/gamepad.c
+@@ -18,6 +18,8 @@
+ 
+ #include <SDL2/SDL.h>
+ #include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
+ 
+ static SDL_GameController *s_pad[INPUT_MAX_PLAYERS];
+ static SDL_JoystickID s_pad_jid[INPUT_MAX_PLAYERS] = { -1, -1, -1, -1, -1, -1 };
+@@ -107,7 +109,7 @@
+         case SDL_CONTROLLERBUTTONDOWN:
+             /* Quicksave / quickload taps from player 1's shoulders — only when
+              * P1 is a 3-button pad (6-button uses LB/RB for Y/Z). */
+-            if (s_pad[0] && ev->cbutton.which == s_pad_jid[0] &&
++            if (!getenv("RR_CONTROLS_PROFILE") && s_pad[0] && ev->cbutton.which == s_pad_jid[0] &&
+                 g_input_map.p[0].pad_type != PAD_6BUTTON) {
+                 if (ev->cbutton.button == SDL_CONTROLLER_BUTTON_LEFTSHOULDER)
+                     s_pending_save = 1;
+@@ -145,7 +147,8 @@
+ uint16_t gamepad_player_mask(int player)
+ {
+     if (player < 0 || player >= INPUT_MAX_PLAYERS) return 0;
+-    SDL_GameController *c = s_pad[player];
++    int slot=g_input_map.p[player].controller_slot;
++    SDL_GameController *c = slot>=0&&slot<INPUT_MAX_PLAYERS?s_pad[slot]:NULL;
+     if (!c) return 0;
+ 
+     const PlayerInput *pi = &g_input_map.p[player];
+@@ -162,22 +165,26 @@
+     /* Always-on convenience: left analog stick -> d-pad directions. */
+     int lx = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
+     int ly = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
+-    if (lx < -dz) m |= input_button_bit(GB_LEFT);
+-    if (lx >  dz) m |= input_button_bit(GB_RIGHT);
+-    if (ly < -dz) m |= input_button_bit(GB_UP);
+-    if (ly >  dz) m |= input_button_bit(GB_DOWN);
++    if (pi->analog_dpad && lx < -dz) m |= input_button_bit(GB_LEFT);
++    if (pi->analog_dpad && lx >  dz) m |= input_button_bit(GB_RIGHT);
++    if (pi->analog_dpad && ly < -dz) m |= input_button_bit(GB_UP);
++    if (pi->analog_dpad && ly >  dz) m |= input_button_bit(GB_DOWN);
+ 
+     return m;
+ }
+ 
+ int gamepad_player_connected(int player)
+ {
+-    return player >= 0 && player < INPUT_MAX_PLAYERS && s_pad[player] &&
+-        SDL_GameControllerGetAttached(s_pad[player]);
+-}
++    if(player<0||player>=INPUT_MAX_PLAYERS)return 0;
++    int slot=g_input_map.p[player].controller_slot;
++    return slot>=0&&slot<INPUT_MAX_PLAYERS&&s_pad[slot]&&SDL_GameControllerGetAttached(s_pad[slot]);
++}
++
++int gamepad_controller_instance(int slot){return slot>=0&&slot<INPUT_MAX_PLAYERS?s_pad_jid[slot]:-1;}
+ 
+ int gamepad_turbo_held(void)
+ {
++    if(getenv("RR_CONTROLS_PROFILE"))return 0;
+     /* Player 1's Back/View button, 3-button mode only (6-button uses it for Mode). */
+     if (!s_pad[0] || g_input_map.p[0].pad_type == PAD_6BUTTON) return 0;
+     return SDL_GameControllerGetButton(s_pad[0], SDL_CONTROLLER_BUTTON_BACK);
+--- a/runner/gamepad.h
++++ b/runner/gamepad.h
+@@ -45,6 +45,7 @@
+  * controller is assigned to that player. */
+ uint16_t gamepad_player_mask(int player);
+ int gamepad_player_connected(int player);
++int gamepad_controller_instance(int slot);
+ 
+ int     gamepad_turbo_held(void);
+ int     gamepad_consume_quicksave(void);

@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "rom_sha256": "f7e95580baf30184d4d18a44042ea7a353308a8ed301d8421aed42f7b0f89663",
+  "reference_sha1": "8ff2b2a58b09c42eeb95f633bd8ea5227ac71358",
+  "source": "https://github.com/plarionov/road-rash-physics/blob/ce5af7c192539f2573d9251837de097d943a372b/TECHNICAL.md",
+  "byte_checks": [
+    {"name": "HBlank vector", "offset": "0x70", "expected_hex": "0000145a"},
+    {"name": "VBlank vector", "offset": "0x78", "expected_hex": "00001164"},
+    {"name": "Race loop JSR to 0xC00C", "offset": "0x7E884", "expected_hex": "4eb90000c00c"},
+    {"name": "Rider step JSR to 0x10E66", "offset": "0xC0AE", "expected_hex": "4eb900010e66"}
+  ],
+  "ram_candidates": {
+    "player_slot": "0xFF1EAA",
+    "rider_stride": "0x80",
+    "vblank_counter": "0xFF3048",
+    "race_step_vblanks": "0xFF304A",
+    "camera_x": "0xFF1E60",
+    "camera_height": "0xFF1E66",
+    "road_segment_index": "0xFF1E68",
+    "road_segment_fraction": "0xFF1E6A"
+  }
+}

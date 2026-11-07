@@ -1,0 +1,22 @@
+{
+  "schema": 1,
+  "note": "Metas de implementacao; este arquivo ainda nao e lido por um runner.",
+  "presentation": {
+    "target_fps": 60,
+    "simulation_policy": "preserve_baseline_until_measured",
+    "world_interpolation": true,
+    "continuous_sprite_scale": true,
+    "continuous_road_projection": true,
+    "filter_choices": ["nearest", "linear"],
+    "render_size_target": [1920, 1080],
+    "aspect_ratio_target": "16:9"
+  },
+  "music": {
+    "default": "original",
+    "choices": ["original", "dean-harris", "custom"],
+    "missing_track_fallback": "original",
+    "separate_music_and_sfx_volume": true
+  },
+  "shaders": {"format_target": "slangp", "runtime": "not_implemented"},
+  "network": {"lan": "research", "online": "research"}
+}

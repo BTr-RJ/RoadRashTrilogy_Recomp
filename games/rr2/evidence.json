@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "rom_sha256": "c7a609019b1f052bcee6204a3a09ea77a5150a748de90b51382fedf4df207848",
+  "reference_sha1": "9afea43ed627671b50dd4a2abdd043b235414b91",
+  "revision": "RR206, header -02; MAME v1.2",
+  "source": "https://github.com/plarionov/road-rash-2-physics/blob/1500da065184d745803d9dbe82fd81c55730ecb5/TECHNICAL.md",
+  "byte_checks": [
+    {"name": "HBlank vector", "offset": "0x70", "expected_hex": "000014be"},
+    {"name": "VBlank vector", "offset": "0x78", "expected_hex": "000011b8"}
+  ],
+  "ram_candidates": {
+    "player1_slot": "0xFF0A62",
+    "player2_slot": "0xFF0EE2",
+    "rider_stride": "0x80",
+    "race_step_vblanks": "0xFF1C08",
+    "pause": "0xFF254E",
+    "two_player_mode": "0xFF0304",
+    "camera_block": "0xFF0A02"
+  }
+}

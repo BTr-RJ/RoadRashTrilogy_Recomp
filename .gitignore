@@ -1,0 +1,20 @@
+# Private inputs and generated game code
+/roms/*
+!/roms/README.md
+/.local/
+/.tools/
+/build/
+/dist/
+/Road Rash*.zip
+__pycache__/
+*.pyc
+*.srm
+*.state
+/.impeccable/review/
+/.impeccable/mocks/
+/.impeccable/config.local.json
+/assets/shaders/
+*.pdb
+*.obj
+*.log
+

@@ -1,0 +1,20 @@
+{
+  "rr1": {
+    "title": "Road Rash",
+    "sha256": "f7e95580baf30184d4d18a44042ea7a353308a8ed301d8421aed42f7b0f89663",
+    "crc32": "DEA53D19",
+    "size": 786432
+  },
+  "rr2": {
+    "title": "ROAD RASH II",
+    "sha256": "c7a609019b1f052bcee6204a3a09ea77a5150a748de90b51382fedf4df207848",
+    "crc32": "0876E992",
+    "size": 1048576
+  },
+  "rr3": {
+    "title": "ROAD RASH 3",
+    "sha256": "1da6a37c09ab87370334cb26dc0339bee85a6b581d3dc7216dc880a71a52aae6",
+    "crc32": "15785956",
+    "size": 2097152
+  }
+}
