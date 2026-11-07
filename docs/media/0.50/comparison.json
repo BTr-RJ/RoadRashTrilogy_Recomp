@@ -1,0 +1,63 @@
+{
+  "version": "0.50",
+  "display_aspect": "4:3",
+  "source_fps": 59.94005994005994,
+  "gif_fps": 50,
+  "left": "Native Mega Drive raster in the project runtime",
+  "right": "Version 0.50 continuous geometry and sprite zoom",
+  "synchronized": true,
+  "normal_speed": true,
+  "files": [
+    {
+      "game": "rr1",
+      "title": "ROAD RASH",
+      "file": "rr1-original-vs-zoom-0.50.gif",
+      "bytes": 4179529,
+      "sha256": "a32e5bea85caff91fb1475daed2fc8c9161a22becd46c1d4626bd9d4202a1384",
+      "executable_sha256": "ee4aabe82e18d0d6c50116014381ccb29548e2b85fae18e13310356c12e28970",
+      "source_frames": 240,
+      "initial_racing_wait": 1000,
+      "first_source_frame": 2741,
+      "gif_frames": 200,
+      "duration_ms": 4000,
+      "shared_palette_colors": 41,
+      "ram_vram_match": true,
+      "hud_match": true,
+      "gif_pixels_verified": true
+    },
+    {
+      "game": "rr2",
+      "title": "ROAD RASH II",
+      "file": "rr2-original-vs-zoom-0.50.gif",
+      "bytes": 3614387,
+      "sha256": "896796bf5f3cccc4e4be86e67338d4803bc3b93d058109b394f9a853381bc21f",
+      "executable_sha256": "92c1c54ccde229261828a650105d862ab660fba7446f3e5702f941c6a40ba83e",
+      "source_frames": 240,
+      "initial_racing_wait": 900,
+      "first_source_frame": 2641,
+      "gif_frames": 200,
+      "duration_ms": 4000,
+      "shared_palette_colors": 42,
+      "ram_vram_match": true,
+      "hud_match": true,
+      "gif_pixels_verified": true
+    },
+    {
+      "game": "rr3",
+      "title": "ROAD RASH 3",
+      "file": "rr3-original-vs-zoom-0.50.gif",
+      "bytes": 3710973,
+      "sha256": "8087133dc8d933bc1e2fdffe3f736742e6cbfc90798a4934e6cbd7a10e528116",
+      "executable_sha256": "163ee229e8a4453e65a8b57bc482ed77c79fb45da1e8f9373f74396645aa4ca2",
+      "source_frames": 240,
+      "initial_racing_wait": 1700,
+      "first_source_frame": 3441,
+      "gif_frames": 200,
+      "duration_ms": 4000,
+      "shared_palette_colors": 48,
+      "ram_vram_match": true,
+      "hud_match": true,
+      "gif_pixels_verified": true
+    }
+  ]
+}

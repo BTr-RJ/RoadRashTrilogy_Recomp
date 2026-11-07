@@ -36,6 +36,29 @@ but requires Microsoft C++ tools to be installed already for fully offline use.
 See [installation and supported revisions](docs/INSTALLATION.md),
 [controls](docs/CONTROLS.md) and [building from source](docs/BUILDING.md).
 
+## Original Mega Drive vs continuous zoom (0.50)
+
+Each GIF shows the **same replay and the same captured frames** side by side:
+**original Mega Drive rendering on the left**, **version 0.50 continuous zoom
+on the right**. Both views use 4:3, matching inputs and normal game speed.
+The original view uses the native raster renderer in this project's runtime.
+
+### Road Rash
+
+![Road Rash: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr1-original-vs-zoom-0.50.gif)
+
+### Road Rash II
+
+![Road Rash II: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr2-original-vs-zoom-0.50.gif)
+
+### Road Rash 3
+
+![Road Rash 3: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr3-original-vs-zoom-0.50.gif)
+
+Captured with the published 0.50 binaries. Each pair preserves guest RAM/VRAM
+and the HUD. The 4-second GIFs sample the 59.94 Hz capture at 50 fps, retaining
+the original pixels and elapsed time. [Capture details and hashes](docs/media/0.50/comparison.json).
+
 ## Features
 
 - Classic trilogy covers, a sober dark launcher and native Windows navigation.
