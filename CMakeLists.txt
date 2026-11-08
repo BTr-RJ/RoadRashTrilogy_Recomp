@@ -77,7 +77,7 @@ add_library(rr_controls_backend STATIC "${RUNNER_ROOT}/input_map.c" "${RUNNER_RO
 target_include_directories(rr_controls_backend PUBLIC "${RUNNER_ROOT}" "${RUNNER_ROOT}/include" "${RUNNER_ROOT}/external/clowncommon")
 target_compile_definitions(rr_controls_backend PRIVATE _CRT_SECURE_NO_WARNINGS RECOMP_LAUNCHER=0)
 target_link_libraries(rr_controls_backend PUBLIC SDL2::SDL2)
-add_executable(TrilogyLauncher WIN32 src/launcher/main.cpp src/launcher/controls.cpp src/launcher/install.cpp src/launcher/app.manifest)
+add_executable(TrilogyLauncher WIN32 src/launcher/main.cpp src/launcher/controls.cpp src/launcher/install.cpp src/launcher/updates.cpp src/launcher/app.manifest)
 enable_language(RC)
 configure_file(src/launcher/launcher.rc.in "${CMAKE_BINARY_DIR}/launcher.rc" @ONLY)
 configure_file(assets/launcher/app.ico "${CMAKE_BINARY_DIR}/app.ico" COPYONLY)

@@ -64,6 +64,9 @@ quantization approximates some fractional edge colors on the 0.60 panel. [Captur
 
 ## What changed from 0.50
 
+- Installed launchers check for updates in the background. **Updates** downloads
+  a verified installer, builds separately, applies with rollback protection and
+  reopens the launcher. Checking does not start installation.
 - More stable scenery, obstacles, opponents and traffic during approach, with
   fractional sprite coverage and fewer unnecessary source/bitmap switches.
 - Corrected road-relative placement and stale hill geometry across climbs,

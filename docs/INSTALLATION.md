@@ -18,6 +18,33 @@ candidate. Names are not used to authenticate a game; SHA-256 is checked. Only
 provided supported games are installed. No game files are downloaded. Your
 original ROM folders are read only; private copies remain in the installation.
 
+## Automatic updates
+
+Installed 0.60 launchers check GitHub in the background at most once per day.
+Open **Updates > Check for updates** to check again. Published Public Test and
+stable releases are included; an unavailable network does not prevent playing.
+Checking alone does not download or install anything.
+
+Choose **Download and install** when a newer version is available. The updater
+checks the download size, SHA-256 and package manifest, reuses your installed
+verified ROM copies, and builds in a separate working folder. Microsoft C++
+tools must still be installed; updates do not start a machine-wide tool setup.
+Keep at least 4 GB free for staging. Close games before starting an update.
+
+After build and gameplay checks, managed files are replaced with persistent
+backup/recovery records and the launcher reopens. Cancel during preparation
+keeps the prior runtime. An interrupted replacement is recovered on the next
+launch. Logs and the previous managed files stay in `.local/updates/`.
+Controls, achievements, ROMs and personal settings are preserved. Old campaign
+checkpoint files are kept, but their exact-build compatibility still applies;
+the updater also retains their previous copies alongside the old runtime backup.
+
+Version 0.50 has no built-in updater. Use the 0.60 installer once to update that
+installation. Future updates can then use **Updates**. Automatic installation is
+for recognized installed copies, not development checkouts or uninstalled ZIPs.
+For manual source development after an update, run `tools/bootstrap_public.py`
+before rebuilding to refresh the prepared SDK against the updated lock file.
+
 ## Supported revisions
 
 | Game | Cartridge revision | Bytes | CRC32 |

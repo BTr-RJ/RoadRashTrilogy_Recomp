@@ -19,6 +19,7 @@
 #include "ra_service.h"
 #include "controls.h"
 #include "install.h"
+#include "updates.h"
 
 using namespace Gdiplus;
 namespace fs = std::filesystem;
@@ -31,6 +32,7 @@ static float dpi_scale=1.f, origin_x=0.f, origin_y=0.f;
 static HFONT body_font;
 static HBRUSH dark_brush;
 static HANDLE game_process;
+static HANDLE launcher_lock;
 static bool qa_launch;
 static ULONG_PTR gdiplus_token;
 static std::unique_ptr<PrivateFontCollection> display_fonts;
@@ -56,7 +58,7 @@ static const wchar_t *descriptions[] = {
 static const uint32_t rom_crc[] = {0xDEA53D19u, 0x0876E992u, 0x15785956u};
 static const int ra_game[] = {82, 119, 166};
 static const Color ink(255, 244, 240, 226), muted(255, 166, 169, 163), yellow(255, 255, 201, 37);
-static constexpr int GAME0=100, PLAY=200, VIDEO=201, AUDIO=202, ACHIEVEMENTS=203, NETWORK=204, IMPORT=205, HELP=206;
+static constexpr int GAME0=100, PLAY=200, VIDEO=201, AUDIO=202, ACHIEVEMENTS=203, NETWORK=204, IMPORT=205, HELP=206, UPDATES=207;
 static std::array<HWND, 3> game_buttons;
 static std::vector<HWND> buttons;
 static int output_size = 1, filter = 2, volume = 85, music_mode=1;
@@ -368,6 +370,7 @@ static void layout() {
         else if(id>=VIDEO&&id<=NETWORK)move(buttons[i],952,267+(id-VIDEO)*62,284,48);
         else if(id==IMPORT)move(buttons[i],952,545,284,42);
         else if(id==HELP)move(buttons[i],1070,44,166,40);
+        else if(id==UPDATES)move(buttons[i],884,44,166,40);
     }
     InvalidateRect(window,nullptr,FALSE);
 }
@@ -405,11 +408,12 @@ static bool capture_window(HWND target){
     DeleteObject(bitmap);DeleteDC(dc);ReleaseDC(nullptr,screen);return saved;
 }
 static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
+    if(rr_updates_event(hwnd,message,wp,lp))return 0;
     switch(message){
     case WM_CREATE:{window=hwnd;
         auto button=[&](const wchar_t* label,int id){HWND b=CreateWindowExW(0,L"BUTTON",label,WS_CHILD|WS_VISIBLE|WS_TABSTOP|BS_OWNERDRAW,0,0,1,1,hwnd,(HMENU)(INT_PTR)id,instance,nullptr);SetWindowSubclass(b,button_subclass,1,0);buttons.push_back(b);return b;};
         for(int i=0;i<3;++i)game_buttons[i]=button(titles[i],GAME0+i);
-        button(L"PLAY",PLAY);button(L"Video & CRT",VIDEO);button(L"Audio & music",AUDIO);button(L"Achievements",ACHIEVEMENTS);button(L"Controls",NETWORK);button(L"Install games",IMPORT);button(L"About",HELP);
+        button(L"PLAY",PLAY);button(L"Video & CRT",VIDEO);button(L"Audio & music",AUDIO);button(L"Achievements",ACHIEVEMENTS);button(L"Controls",NETWORK);button(L"Install games",IMPORT);button(L"Updates",UPDATES);button(L"About",HELP);
         SetWindowTextW(GetDlgItem(hwnd,PLAY),ready(selected)?L"PLAY":L"INSTALL GAME");SetTimer(hwnd,1,150,nullptr);layout();return 0;}
     case WM_PAINT:paint(hwnd);return 0;
     case WM_PRINTCLIENT:render(hwnd,(HDC)wp);return 0;
@@ -420,6 +424,7 @@ static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
     case WM_COMMAND:{int id=LOWORD(wp);if(id>=GAME0&&id<GAME0+3){select_game(id-GAME0);return 0;}
         switch(id){case PLAY:launch();break;case VIDEO:show_dialog(0);break;case AUDIO:show_dialog(1);break;case ACHIEVEMENTS:show_dialog(2);break;case IMPORT:rr_install_show(hwnd);break;
         case NETWORK:rr_controls_show(hwnd);break;
+        case UPDATES:rr_updates_show(hwnd);break;
         case HELP:MessageBoxW(hwnd,L"Road Rash Trilogy Recomp - version " RR_VERSION L"\n\nAn independent Windows fan project using your original Mega Drive ROMs. Native translated 68000 code runs with a fallback for remaining paths.\n\nContinuous sprite zoom, widescreen, CRT filters and local achievements. Network play is not implemented.\n\nClassic covers: libretro-thumbnails. Fonts: Barlow / OFL. CRT: koko-aio. See CREDITS.md and THIRD_PARTY_NOTICES.md.",L"About",MB_OK);break;}return 0;}
     case WM_TIMER:{if(!qa_ui_result.empty()){
             if(qa_ui_stage==0){qa_ui_initial=selected;PostMessageW(game_buttons[selected],WM_KEYDOWN,VK_RIGHT,0);}
@@ -427,11 +432,12 @@ static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
             if(qa_ui_stage==2){qa_ui_ok&=qa_ui_launched==(qa_ui_initial+1)%3;PostMessageW(game_buttons[qa_ui_initial],WM_KEYDOWN,VK_LEFT,0);}
             if(qa_ui_stage==3){qa_ui_ok&=selected==qa_ui_initial;PostMessageW(GetDlgItem(hwnd,VIDEO),WM_KEYDOWN,VK_RETURN,0);}
             if(qa_ui_stage==4){qa_ui_ok&=dialog!=nullptr;if(dialog)DestroyWindow(dialog);PostMessageW(GetDlgItem(hwnd,NETWORK),WM_KEYDOWN,VK_RETURN,0);}
-            if(qa_ui_stage==5){qa_ui_ok&=rr_controls_window()!=nullptr;if(rr_controls_window())SendMessageW(rr_controls_window(),WM_CLOSE,0,0);qa_ui_ok&=rr_controls_self_test(hwnd);fs::create_directories(qa_ui_result.parent_path());std::ofstream output(qa_ui_result);output<<"{\"queued_keyboard_and_mapping\":"<<(qa_ui_ok?"true":"false")<<",\"same_card_arrow_enter\":"<<(qa_ui_launched==(qa_ui_initial+1)%3?"true":"false")<<"}\n";output.close();DestroyWindow(hwnd);return 0;}
+            if(qa_ui_stage==5){qa_ui_ok&=rr_controls_window()!=nullptr;if(rr_controls_window())SendMessageW(rr_controls_window(),WM_CLOSE,0,0);qa_ui_ok&=rr_controls_self_test(hwnd);PostMessageW(GetDlgItem(hwnd,UPDATES),WM_KEYDOWN,VK_RETURN,0);}
+            if(qa_ui_stage==6){bool updates=rr_updates_window()!=nullptr;qa_ui_ok&=updates;if(updates)SendMessageW(rr_updates_window(),WM_CLOSE,0,0);fs::create_directories(qa_ui_result.parent_path());std::ofstream output(qa_ui_result);output<<"{\"queued_keyboard_and_mapping\":"<<(qa_ui_ok?"true":"false")<<",\"updates_keyboard\":"<<(updates?"true":"false")<<",\"same_card_arrow_enter\":"<<(qa_ui_launched==(qa_ui_initial+1)%3?"true":"false")<<"}\n";output.close();DestroyWindow(hwnd);return 0;}
             ++qa_ui_stage;return 0;
         }if(!qa_capture.empty()){
             static int ticks=0;if(++ticks<3)return 0;
-            HWND target=rr_controls_window();if(!target)target=rr_install_window();if(!target)target=dialog;if(!target)target=hwnd;
+            HWND target=rr_controls_window();if(!target)target=rr_install_window();if(!target)target=rr_updates_window();if(!target)target=dialog;if(!target)target=hwnd;
             bool ok=capture_window(target);if(target!=hwnd)DestroyWindow(target);DestroyWindow(hwnd);PostQuitMessage(ok?0:4);return 0;
         }rr_ra_update(ra,0);
         if(game_process&&WaitForSingleObject(game_process,0)==WAIT_OBJECT_0){DWORD exit;GetExitCodeProcess(game_process,&exit);CloseHandle(game_process);game_process=nullptr;ShowWindow(hwnd,SW_RESTORE);SetForegroundWindow(hwnd);if(exit)MessageBoxW(hwnd,L"The game exited with an error. Diagnostic logs are available in the .local/logs folder.",L"Game session ended",MB_OK|MB_ICONWARNING);}
@@ -447,6 +453,7 @@ static LRESULT CALLBACK proc(HWND hwnd,UINT message,WPARAM wp,LPARAM lp) {
 int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     instance=app;SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     int argc=0;auto argv=CommandLineToArgvW(GetCommandLineW(),&argc);
+    if(argc>1&&(!wcscmp(argv[1],L"--apply-update")||!wcscmp(argv[1],L"--recover-update"))){int result=rr_updates_host(app,argc,argv);LocalFree(argv);return result;}
     for(int i=1;i<argc;++i){if(!wcscmp(argv[i],L"--qa-capture")&&i+1<argc)qa_capture=fs::absolute(argv[++i]);else if(!wcscmp(argv[i],L"--qa-ui-test")&&i+1<argc)qa_ui_result=fs::absolute(argv[++i]);else if(!wcscmp(argv[i],L"--qa-page")&&i+1<argc)qa_page=argv[++i];else if(!wcscmp(argv[i],L"--qa-size")&&i+2<argc){qa_width=_wtoi(argv[++i]);qa_height=_wtoi(argv[++i]);}}
     LocalFree(argv);bool qa=!qa_capture.empty()||!qa_ui_result.empty();if(qa)SetEnvironmentVariableW(L"RR_QA_CAPTURE",L"1");
     CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
@@ -454,6 +461,12 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     wchar_t path[32768];GetModuleFileNameW(nullptr,path,32768);root=fs::path(path).parent_path();
     for(int i=0;i<6&&!fs::exists(root/L"assets/launcher/rr1.png");++i){if(root==root.parent_path())break;root=root.parent_path();}
     assets=root/L"assets/launcher";
+    bool qa_session=qa||(args&&!wcscmp(args,L"--qa-launch-crt"));
+    if(!qa_session){
+        launcher_lock=rr_updates_mutex(root,true);
+        if(!launcher_lock){MessageBoxW(nullptr,L"The launcher or updater is already open for this installation.",L"Road Rash Trilogy Recomp",MB_OK);return 2;}
+        if(rr_updates_recovery(root)){ReleaseMutex(launcher_lock);CloseHandle(launcher_lock);return 0;}
+    }
     if(!fs::exists(assets/L"rr1.png")) { MessageBoxW(nullptr,L"Launcher artwork is missing. Extract the complete release package before opening the app.",L"Missing files",MB_OK|MB_ICONERROR);return 1; }
     fs::create_directories(root/L".local");settings=root/L".local/launcher.ini";
     selected=std::clamp(ini_int(L"game",0),0,2);output_size=std::clamp(ini_int(L"output_size",1),0,4);filter=std::clamp(ini_int(L"filter",2),0,7);volume=std::clamp(ini_int(L"volume",85),0,100);fullscreen=ini_int(L"fullscreen",0)!=0;
@@ -475,6 +488,7 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     body_font=CreateFontW(-(int)(18*dpi_scale),0,0,0,FW_NORMAL,FALSE,FALSE,FALSE,DEFAULT_CHARSET,OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,DEFAULT_PITCH,L"Barlow");
     dark_brush=CreateSolidBrush(RGB(26,29,31));InitCommonControls();
     rr_controls_init(app,body_font,qa_ui_result.empty()?root/L".local/controls.ini":qa_ui_result.parent_path()/L"qa-controls.ini");rr_install_init(app,body_font,root);
+    rr_updates_init(app,body_font,root,qa_session,[]{return !game_process&&!rr_install_busy();});
     if(args && !wcscmp(args,L"--qa-launch-crt")){
         const wchar_t *replay=_wgetenv(L"RR_QA_INPUT");if(!replay||!fs::exists(replay))return 3;
         qa_launch=true;selected=0;filter=2;wide_view=true;fullscreen=false;output_size=1;
@@ -491,8 +505,10 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     if(qa_width>=920&&qa_height>=600){initial_w=qa_width;initial_h=qa_height;}
     HWND hwnd=CreateWindowExW(qa?WS_EX_NOACTIVATE:0,klass.lpszClassName,L"Road Rash Trilogy Recomp - 0.60",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-initial_w)/2,work.top+(work.bottom-work.top-initial_h)/2,initial_w,initial_h,nullptr,nullptr,app,nullptr);
     ShowWindow(hwnd,qa?SW_SHOWNOACTIVATE:show);UpdateWindow(hwnd);
-    if(!qa_capture.empty()){if(qa_page==L"controls")rr_controls_show(hwnd);else if(qa_page==L"install")rr_install_show(hwnd);else if(qa_page==L"video")show_dialog(0);else if(qa_page==L"audio")show_dialog(1);else if(qa_page==L"achievements")show_dialog(2);}
-    MSG message;while(GetMessageW(&message,nullptr,0,0)>0){if(rr_controls_message(message)||rr_install_message(message))continue;if(dialog&&IsDialogMessageW(dialog,&message))continue;if(!dialog&&IsDialogMessageW(hwnd,&message))continue;TranslateMessage(&message);DispatchMessageW(&message);}
+    rr_updates_startup(hwnd);
+    if(!qa_capture.empty()){if(qa_page==L"controls")rr_controls_show(hwnd);else if(qa_page==L"install")rr_install_show(hwnd);else if(qa_page==L"updates")rr_updates_show(hwnd);else if(qa_page==L"video")show_dialog(0);else if(qa_page==L"audio")show_dialog(1);else if(qa_page==L"achievements")show_dialog(2);}
+    MSG message;while(GetMessageW(&message,nullptr,0,0)>0){if(rr_controls_message(message)||rr_install_message(message)||rr_updates_message(message))continue;if(dialog&&IsDialogMessageW(dialog,&message))continue;if(!dialog&&IsDialogMessageW(hwnd,&message))continue;TranslateMessage(&message);DispatchMessageW(&message);}
+    rr_updates_shutdown();if(launcher_lock){ReleaseMutex(launcher_lock);CloseHandle(launcher_lock);}
     rr_controls_shutdown();rr_ra_destroy(ra);for(auto& image:covers)image.reset();display_family.reset();body_family.reset();brand_art.reset();display_fonts.reset();
     RemoveFontResourceExW((assets/L"BarlowCondensed-Bold.ttf").c_str(),FR_PRIVATE,nullptr);
     RemoveFontResourceExW((assets/L"Barlow-Regular.ttf").c_str(),FR_PRIVATE,nullptr);

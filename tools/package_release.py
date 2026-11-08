@@ -11,7 +11,7 @@ ROOT=Path(__file__).resolve().parents[1]
 VERSION=re.search(r'project\(RoadRashTrilogyRecomp VERSION ([0-9.]+)',(ROOT/'CMakeLists.txt').read_text())[1]
 TOP_FILES=('CMakeLists.txt','.gitignore','README.md','CREDITS.md','THIRD_PARTY_NOTICES.md',
            'CONTRIBUTING.md','Jogar.cmd')
-PUBLIC_TOOLS=('apply_runtime_patches.py','audit_release.py','audit_repository.py',
+PUBLIC_TOOLS=('apply_runtime_patches.py','audit_release.py','audit_repository.py','update_release.py',
               'bootstrap_public.py','install_roms.py','package_release.py',
               'patch_controls.py','patch_codegen.py','patch_campaign_states.py','patch_engine.py','patch_presentation.py',
               'patch_raster.py','patch_raster_timing.py','patch_sprite_geometry.py',

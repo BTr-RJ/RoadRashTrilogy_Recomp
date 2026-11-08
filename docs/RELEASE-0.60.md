@@ -6,6 +6,10 @@ neither ROMs nor generated game code are distributed.
 
 ## Improvements over 0.50
 
+- Automatic release checks and an **Updates** screen in the launcher, following
+  the RedBaron_Recomp workflow. Downloads require the GitHub asset's SHA-256;
+  compilation and runtime checks complete in a separate stage before managed
+  files are replaced with persistent rollback/recovery metadata.
 - More stable approach and scaling of roadside scenery, obstacles, opponents and
   traffic. Current-source fractional coverage reduces edge crawling and thin
   objects disappearing between sample positions. Source-art qualification avoids
