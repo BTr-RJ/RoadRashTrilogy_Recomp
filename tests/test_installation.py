@@ -96,7 +96,7 @@ class InstallationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError,'checksum mismatch'):release.stage(root,Path(tmp)/'package',offline=True)
     def test_archive_preserves_full_dotted_release_name(self):
         with tempfile.TemporaryDirectory() as tmp:
-            directory=Path(tmp)/'RoadRashTrilogyRecomp-0.50-Windows-x64';directory.mkdir()
+            directory=Path(tmp)/'RoadRashTrilogyRecomp-0.60-Windows-x64';directory.mkdir()
             (directory/'README.md').write_text('public fixture')
             target=release.archive(directory)
             self.assertEqual(target.name,directory.name+'.zip')

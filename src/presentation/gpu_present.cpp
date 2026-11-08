@@ -15,6 +15,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <vector>
+#include <string>
 using Microsoft::WRL::ComPtr;
 static ComPtr<ID3D11Device> device;
 static ComPtr<ID3D11DeviceContext> context;
@@ -29,9 +30,8 @@ static bool tried;
 static libra_instance_t libra;
 static int source_w,source_h;
 static int last_native_width;
-static float preset_background,preset_global_zoom,preset_ambient_force;
-static float preset_bezel,preset_curvature;
-static bool was_wide;
+static float authored_aspect_x,authored_aspect_y;
+static bool aspect_overridden;
 static bool checked(libra_error_t error) {
     if(!error)return true;
     libra.error_print(error);libra.error_free(&error);return false;
@@ -40,6 +40,7 @@ extern "C" void rr_gpu_shutdown() {
     if(chain)checked(libra.d3d11_filter_chain_free(&chain));
     filtered_target.Reset();filtered.Reset();view.Reset();source.Reset();shader_state.Reset();context1.Reset();context.Reset();device.Reset();
     tried=false;source_w=source_h=last_native_width=0;
+    aspect_overridden=false;
 }
 static bool init(SDL_Renderer *renderer) {
     tried=true;
@@ -65,15 +66,26 @@ static bool init(SDL_Renderer *renderer) {
     if(pc)checked(libra.preset_ctx_free(&pc));
     if(!ok)return false;
     filter_chain_d3d11_opt_t opt{};opt.version=2;
+    struct AuthoredParameter {std::string name;float initial;};
+    std::vector<AuthoredParameter> authored;
+    if(getenv("RR_PRESET_TRACE")) {
+        libra_preset_param_list_t parameters{};
+        if(checked(libra.preset_get_runtime_params(&p,&parameters))) {
+            for(uint64_t i=0;i<parameters.length;i++)authored.push_back({parameters.parameters[i].name,parameters.parameters[i].initial});
+            checked(libra.preset_free_runtime_params(parameters));
+        }
+    }
     ok=checked(libra.d3d11_filter_chain_create(&p,device.Get(),&opt,&chain));
     if(p)checked(libra.preset_free(&p));
     if(ok) {
-        checked(libra.d3d11_filter_chain_get_param(&chain,"DO_BG_IMAGE",&preset_background));
-        checked(libra.d3d11_filter_chain_get_param(&chain,"DO_GLOBAL_SHZO",&preset_global_zoom));
-        checked(libra.d3d11_filter_chain_get_param(&chain,"AMBI_BG_IMAGE_FORCE",&preset_ambient_force));
-        checked(libra.d3d11_filter_chain_get_param(&chain,"DO_BEZEL",&preset_bezel));
-        checked(libra.d3d11_filter_chain_get_param(&chain,"DO_CURVATURE",&preset_curvature));
-        was_wide=false;
+        if(!checked(libra.d3d11_filter_chain_get_param(&chain,"ASPECT_X",&authored_aspect_x))||
+           !checked(libra.d3d11_filter_chain_get_param(&chain,"ASPECT_Y",&authored_aspect_y)))return false;
+        // Match Super Monaco 0.16: preserve the resolved artistic settings.
+        for(const auto& parameter:authored) {
+            float actual=0;
+            if(checked(libra.d3d11_filter_chain_get_param(&chain,parameter.name.c_str(),&actual)))
+                std::fprintf(stderr,"[RR PRESET ORIGINAL] %s=%.9g authored=%.9g\n",parameter.name.c_str(),actual,parameter.initial);
+        }
         std::fprintf(stderr,"[RR SHADER] loaded Slang preset: %s\n",preset);
     }
     return ok;
@@ -107,24 +119,17 @@ extern "C" int rr_gpu_present(SDL_Renderer *renderer,const uint32_t *pixels,int 
     }
     if(last_native_width!=native_width || frame==0)last_native_width=0;
     const float aspect=(float)rr_display_aspect(width,native_width);
-    bool is_wide=aspect>1.4f;
-    if(is_wide!=was_wide) {
-        // The immersive preset photographs a fixed 4:3 monitor. Its foreground
-        // covers a wide tube even after ASPECT_X is corrected. Wide scenes use
-        // koko's generated bezel/lighting instead, without that aperture mask
-        // or the photo's global zoom. Keep the original preset in 4:3.
-        checked(libra.d3d11_filter_chain_set_param(&chain,"DO_BG_IMAGE",is_wide?0.f:preset_background));
-        checked(libra.d3d11_filter_chain_set_param(&chain,"DO_GLOBAL_SHZO",is_wide?0.f:preset_global_zoom));
-        checked(libra.d3d11_filter_chain_set_param(&chain,"AMBI_BG_IMAGE_FORCE",is_wide?0.f:preset_ambient_force));
-        checked(libra.d3d11_filter_chain_set_param(&chain,"DO_BEZEL",is_wide?0.f:preset_bezel));
-        checked(libra.d3d11_filter_chain_set_param(&chain,"DO_CURVATURE",is_wide?0.f:preset_curvature));
-        was_wide=is_wide;
-        std::fprintf(stderr,"[RR SHADER] %s aperture: %s\n",is_wide?"wide":"4:3",is_wide?"full scene, no bezel/curvature crop":"original preset");
+    // Super Monaco 0.16 display integration for expanded canvases. Native
+    // 4:3 keeps the previous Road Rash preset values, without setters.
+    if(width>native_width){
+        if(!checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_X",aspect))||
+           !checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_Y",1.f)))return 0;
+        aspect_overridden=true;
+    }else if(aspect_overridden){
+        if(!checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_X",authored_aspect_x))||
+           !checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_Y",authored_aspect_y)))return 0;
+        aspect_overridden=false;
     }
-    // Override koko's fixed 4:3 preset on every frame: an H32/H40 change can
-    // occur without a canvas resize. The shader and SDL use the same geometry.
-    if(!checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_X",aspect))||
-       !checked(libra.d3d11_filter_chain_set_param(&chain,"ASPECT_Y",1.f)))return 0;
     if(!last_native_width)std::fprintf(stderr,"[RR SHADER] source=%dx%d native=%d aspect=%.7f\n",width,height,native_width,aspect);
     last_native_width=native_width;
     context->UpdateSubresource(source.Get(),0,nullptr,pixels,stride*4,0);

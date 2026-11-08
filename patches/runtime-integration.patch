@@ -15,7 +15,72 @@
  }
  
  /* Engine-owned game fiber stack: fully committed, guard page below, never
-@@ -930,7 +934,7 @@
+@@ -574,6 +578,32 @@
+     }
+ }
+ 
++/* RR_CAMPAIGN_CONTINUATION: portable PC/register/guest-stack continuation.
++ * No fiber bytes, return addresses into the executable, or C locals on disk.
++ * Native routines use the established A7-neutral RTS ABI. The floor executes
++ * the short caller continuations, then native entry lookup takes over again. */
++extern RecompFuncPtr recomp_find_func(uint32_t addr);
++static void rr_continue_guest(void)
++{
++    rr_service_pending_irq(); /* same resume edge as the original scheduler yield */
++    for (;;) {
++        uint32_t pc=g_cpu.PC & 0xFFFFFFu;
++        RecompFuncPtr fn=recomp_find_func(pc);
++        if (fn) {
++            recomp_call_func(fn);
++            g_rte_pending=0; g_split_sp_popped=0;
++            g_cpu.PC=m68k_read32(g_cpu.A[7]) & 0xFFFFFFu;
++            g_cpu.A[7]+=4;
++        } else {
++            M68kiStatus st=m68k_interp_step();
++            if (st!=M68KI_OK) {
++                fprintf(stderr,"[RR STATE] continuation halted status=%d PC=%06X\n",st,pc);
++                for (;;) yield_to_main(GLUE_YIELD_HALT);
++            }
++        }
++    }
++}
++
+ /* Game fiber entry point. */
+ static void game_fiber_func(void *param)
+ {
+@@ -584,6 +614,7 @@
+     if (s_game_fiber_resume_pc) {
+         uint32_t resume_pc = s_game_fiber_resume_pc & 0xFFFFFFu;
+         s_game_fiber_resume_pc = 0;
++        if (resume_pc==0xFFFFFEu) { rr_continue_guest(); return; }
+         g_cpu.A[7] = g_game_layout.initial_ssp;
+         recomp_call_addr(resume_pc);
+         if (g_game_spec.dispatch_main_loop_pc) {
+@@ -644,10 +675,22 @@
+ static int s_irq_in_progress = 0; /* also excludes interleaved IRQs from acceleration */
+ static int32_t s_cycle_budget = 0;
+ static int     s_game_yielded_vblank = 0;
+-static int s_state_requested,s_state_parked;
++int rr_state_requested;
++#define s_state_requested rr_state_requested
++static int s_state_parked;
+ void glue_state_boundary_request(int requested)
+ { s_state_requested=requested; if (!requested) s_state_parked=0; }
+ int glue_state_boundary_ready(void) { return s_state_parked; }
++static int s_pending_irq;
++extern int rr_adapter_atomic;
++int rr_state_park(uint32_t pc)
++{
++    if (!s_state_requested || s_state_parked || s_irq_in_progress || s_in_vblank_service ||
++        rr_adapter_atomic || !s_main_fiber) return 0;
++    g_cpu.PC=pc; s_state_parked=1;
++    yield_to_main(GLUE_YIELD_IRQPOLL);
++    return 1;
++}
+ /* 68K cycles spent inside an interrupt handler (V-int/H-int), still owed to
+  * the raster. own_deliver_vint runs the whole handler atomically at the
+  * vblank scanline with budget yields gated (s_in_vblank_service), so without
+@@ -930,7 +973,7 @@
      g_cpu.A[7] = STK;
      g_cpu.SR = (uint16_t)((g_cpu.SR & ~0x0700u) | ((uint16_t)(level & 7) << 8));
      s_irq_in_progress = 1;
@@ -24,7 +89,7 @@
      g_rte_pending = 0; g_rte_pending_ptr = &s_rte_dummy; g_rte_pending = 0;
      if (genesis_force_interp()) {
          m68k_interp_run_handler(m68k_read32(level == 6 ? 0x78 : 0x70) & 0xFFFFFFu);
-@@ -938,12 +942,32 @@
+@@ -938,12 +981,32 @@
      if (level == 6) { if (g_game_spec.call_vblank) g_game_spec.call_vblank(); }
      else            { if (g_game_spec.call_hblank) g_game_spec.call_hblank(); }
      g_rte_pending_ptr = &s_rte_real; g_rte_pending = 0;
@@ -58,7 +123,7 @@
  }
  
  /* Own-backend interrupt delivery — the clownmdemu-free twin of
-@@ -957,7 +981,8 @@
+@@ -957,7 +1020,8 @@
       * a crossing V-int and let it deliver after the current handler RTEs. (SR
       * mask=level usually makes imask>=6 below anyway; this guards the case where
       * the handler itself drops the mask mid-run.) */
@@ -68,7 +133,7 @@
      int imask = (g_cpu.SR >> 8) & 7;
  
      if (level == 6) {
-@@ -981,7 +1006,7 @@
+@@ -981,7 +1045,7 @@
               * runs at the glue_yield_for_vblank resume point. Mid-run delivery
               * (game not parked) still uses the atomic path below — no regression
               * for lag-frame V-ints. */
@@ -77,7 +142,7 @@
                  s_pending_irq = 6;
                  s_game_yielded_vblank = 0;   /* let glue_run_game_chunk resume the fiber */
              } else {
-@@ -1003,6 +1028,9 @@
+@@ -1003,6 +1067,9 @@
              s_own_vint_latched = 1;
          }
      } else if (level == 4 && imask < 4) {
@@ -87,7 +152,7 @@
          const uint32_t STK = g_game_layout.intr_stack;
          uint32_t byteoff = (STK - 256u) & 0xFFFFu;
          uint8_t save[256];
-@@ -1048,7 +1076,8 @@
+@@ -1048,7 +1115,8 @@
       * glue_own_interrupt). Debt is still charged/drained for cycle stamping. */
      if (((g_cpu.SR >> 8) & 7) >= 6) return 0;   /* still masked — keep latched */
      s_own_vint_latched = 0;
@@ -97,6 +162,54 @@
      return 1;
  }
  
+@@ -2395,7 +2463,7 @@
+     int32_t  game_yielded_break, interleave_active;
+     uint32_t chunk_cycles;
+     int32_t  own_vint_latched, pending_irq;
+-    int32_t  state_requested, state_parked;
++    int32_t  state_requested, state_parked, rr_hint_latched;
+     uint32_t spin_addr;
+     int32_t  spin_count;
+     uint32_t z80poll_last_addr;
+@@ -2452,6 +2520,7 @@
+     s.pending_irq          = s_pending_irq;
+     s.state_requested      = s_state_requested;
+     s.state_parked         = s_state_parked;
++    s.rr_hint_latched      = rr_hint_latched;
+     s.spin_addr            = s_spin_addr;
+     s.spin_count           = s_spin_count;
+     s.z80poll_last_addr    = s_z80poll_last_addr;
+@@ -2505,6 +2574,7 @@
+     s_pending_irq               = s.pending_irq;
+     s_state_requested           = s.state_requested;
+     s_state_parked              = s.state_parked;
++    rr_hint_latched             = s.rr_hint_latched;
+     s_spin_addr                 = s.spin_addr;
+     s_spin_count                = s.spin_count;
+     s_z80poll_last_addr         = s.z80poll_last_addr;
+@@ -2513,6 +2583,22 @@
+     s_watchdog_counter          = s.watchdog_counter;
+     g_split_sp_popped           = s.split_sp_popped;
+     return 1;
++}
++
++/* Restart the host stack while retaining the serialized scheduler clocks.
++ * The saved PC is at a pre-instruction game hook, outside any interrupt. */
++void rr_state_resume(void)
++{
++    GlueRbSched saved;
++    glue_rb_sched_save(&saved,sizeof saved);
++    glue_restart_game_fiber(0xFFFFFEu);
++    recomp_tail_frame_set(NULL);
++    glue_rb_sched_load(&saved,sizeof saved);
++    s_state_requested=s_state_parked=0;
++    s_in_floor=0; /* the serialized interpreter C frame was replaced */
++    s_game_fiber_resume_pc=0xFFFFFEu;
++    s_game_running=1; s_game_yielded_vblank=0;
++    s_yield_site=GLUE_YIELD_IRQPOLL;
+ }
+ 
+ /* EXEC: [u64 tail-frame head][u32 fiber blob len][fiber blob]. The blob and
 --- a/runner/sim_step.c
 +++ b/runner/sim_step.c
 @@ -1,5 +1,6 @@
@@ -174,16 +287,33 @@
          if (g_app_config.fullscreen == 2)      win_flags |= SDL_WINDOW_FULLSCREEN;
          else if (g_app_config.fullscreen == 1) win_flags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
      }
-@@ -3161,6 +3178,8 @@
+@@ -3161,6 +3178,9 @@
  #endif
              if (ev.type == SDL_QUIT) { running = 0; window_close_requested = 1; break; }
              if (ev.type == SDL_KEYDOWN) {
 +                extern int rr_game_key(int); /* RR_GAME_KEYS */
++                if(ev.key.repeat && ev.key.keysym.sym==SDLK_F1) continue;
 +                if(!ev.key.repeat && rr_game_key((int)ev.key.keysym.sym)) continue;
                  if (!ev.key.repeat && !(ev.key.keysym.mod & (KMOD_SHIFT | KMOD_CTRL)) &&
                      ev.key.keysym.sym == SDLK_F7) {
                      overlay_request = 2; continue;
-@@ -3591,6 +3610,7 @@
+@@ -3231,6 +3251,7 @@
+             }
+         }
+ 
++        { extern void rr_campaign_input(void); rr_campaign_input(); }
+         if (!running) break; /* Close must not execute another game/render tick. */
+         {
+             uint32_t pad = gamepad_overlay_mask();
+@@ -3564,6 +3585,7 @@
+ 
+         frame_num++;
+ 
++        { extern void rr_campaign_tick(void); rr_campaign_tick(); }
+         if (g_game_spec.state_size) host_state_tick();
+ 
+         /* Tick the input script (if loaded). RAM read helpers route
+@@ -3591,6 +3613,7 @@
                  fprintf(stderr, "[input_script] exiting per script directive (code=%d)\n",
                          input_script_exit_code());
                  if (s_sram_dirty) runner_sram_flush();
@@ -191,21 +321,23 @@
                  return input_script_exit_code();
              }
          }
-@@ -3642,10 +3662,10 @@
+@@ -3642,10 +3665,11 @@
          /* Upload framebuffer to GPU texture. When a present-time color model
           * is enabled, transform a COPY into s_present_buf and upload that —
           * s_framebuf (the verified/hashed raw VDP output) is never modified. */
 -        if (!benchmark_frames) {
 -        const uint32_t *present_src = s_framebuf;
+-        if (s_color_lut_on) {
+-            color_lut_map_frame(&s_color_lut, s_framebuf, s_present_buf,
 +        if (!benchmark_frames || getenv("RR_PRESENT_PROBE")) {
 +        const uint32_t *present_src = rr_motion_present(s_framebuf,s_frame_stride,s_screen_width,s_screen_height,frame_num);
-         if (s_color_lut_on) {
--            color_lut_map_frame(&s_color_lut, s_framebuf, s_present_buf,
++        const char *author_shader=getenv("RR_SHADER_PATH"); /* RR_AUTHOR_SHADER */
++        if (s_color_lut_on && (!author_shader || !*author_shader)) {
 +            color_lut_map_frame(&s_color_lut, present_src, s_present_buf,
                                  s_screen_width, s_screen_height,
                                  MAX_SCREEN_WIDTH);
              present_src = s_present_buf;
-@@ -3747,6 +3767,8 @@
+@@ -3747,6 +3771,8 @@
              }
          }
          FRAME_PHASE(8);
@@ -214,7 +346,7 @@
          SDL_RenderPresent(renderer);
  #if GENESIS_HAS_RECOMP_NET
          if (!genesis_netplay_active())
-@@ -3960,6 +3982,7 @@
+@@ -3960,6 +3986,7 @@
      if (s_framebuf != s_native_storage) free(s_framebuf);
      if (s_present_buf != s_present_storage) free(s_present_buf);
      gamepad_shutdown();
@@ -267,7 +399,7 @@
  }
  
  /* ---- Per-scanline timing -------------------------------------------------- */
-@@ -493,6 +509,33 @@
+@@ -493,6 +509,41 @@
  static int s_unlimited_sprites;
  void gvdp_set_unlimited_sprites(int enabled) { s_unlimited_sprites=!!enabled; }
  int  gvdp_unlimited_sprites(void) { return s_unlimited_sprites; }
@@ -275,6 +407,14 @@
 +static GVDPVisualSprite s_visual_sprites;
 +static void *s_visual_user;
 +static int s_visual_pass;
++/* RR_COVERAGE_BASE */
++static uint8_t s_base_idx[GVDP_MAX_WIDTH],s_base_op[GVDP_MAX_WIDTH],s_base_hi[GVDP_MAX_WIDTH],s_base_order[GVDP_MAX_WIDTH];
++static uint8_t s_background_idx[GVDP_MAX_WIDTH],s_background_owner[GVDP_MAX_WIDTH],s_plane_high[GVDP_MAX_WIDTH];
++/* RR_VISUAL_VIEWPORT */
++static GVDPVisualViewport s_visual_viewport;
++static void *s_visual_viewport_user;
++void gvdp_set_visual_viewport(GVDPVisualViewport viewport,void *user)
++{s_visual_viewport=viewport;s_visual_viewport_user=user;}
 +/* RR_VISUAL_AUDIT */
 +static GVDPVisualAudit s_visual_audit;
 +static void *s_visual_audit_user;
@@ -301,7 +441,7 @@
  static GVDPHostSprites s_host_sprites;
  static void *s_host_sprites_user;
  static uint32_t s_host_palette[GVDP_HOST_PALETTE_SIZE];
-@@ -574,6 +617,9 @@
+@@ -574,6 +625,9 @@
      if (e > max_e) e = max_e;
      return e;
  }
@@ -311,7 +451,7 @@
  
  void gvdp_set_ws_extra(int extra_px) { s_ws_extra = extra_px; }
  
-@@ -632,6 +678,7 @@
+@@ -632,6 +686,7 @@
       * `offset` = output column that authentic screen column 0 maps to (centers
       * the view in the canvas). */
      memset(s_spr_op, 0, (size_t)total);
@@ -319,7 +459,7 @@
      memset(s_spr_shadow_op, 0, (size_t)total);
      memset(s_spr_hilite_op, 0, (size_t)total);
  
-@@ -642,7 +689,7 @@
+@@ -642,7 +697,7 @@
      int sh_mode       = MODE4_SHI(v) != 0;
      int cell_h_shift  = im2 ? 4 : 3;          /* cell height 16 or 8 px        */
      int tile_bytes    = im2 ? 64 : 32;
@@ -328,7 +468,7 @@
  
      /* Tracks the first opaque sprite owner per pixel (first-wins; a second
       * opaque hit raises the collision flag). */
-@@ -653,7 +700,7 @@
+@@ -653,7 +708,7 @@
  
      for (int n = 0; n < max_sprites; n++) {
          uint16_t e = (uint16_t)(sat + link * 8);
@@ -337,7 +477,7 @@
          uint8_t sz = v->vram[(uint16_t)(e + 2)];
          unsigned pattern_bytes;
          const uint8_t *patterns=gvdp_sprite_patterns(sz,&pattern_bytes);
-@@ -661,6 +708,44 @@
+@@ -661,6 +716,44 @@
          int vsz    = (sz & 3) + 1;            /* height in cells (1..4)        */
          int height = vsz << cell_h_shift;
          int next   = v->vram[(uint16_t)(e + 3)] & 0x7F;
@@ -382,7 +522,7 @@
  
          if (line >= y && line < y + height) {
              if (++on_line > max_per_line && !s_unlimited_sprites) { v->sprite_overflow = 1; break; }
-@@ -674,7 +759,7 @@
+@@ -674,7 +767,7 @@
               * bit 9 (max sprite X ~480), so this is identical there. The game's
               * BuildSprites/Render_Sprites must likewise mask to $3FF in
               * widescreen so the high bit survives to the sprite table. */
@@ -391,7 +531,7 @@
              int screen_x  = xword - 128 + offset;  /* +offset: center in the output canvas */
  
              /* Sprite masking: an x==0 sprite after another on-line sprite
-@@ -720,7 +805,7 @@
+@@ -720,7 +813,7 @@
                      else {
                          s_spr_idx[sx] = ext?(uint8_t)(GVDP_HOST_PALETTE_BASE+(ext-1)*16+nib)
                                            :(uint8_t)(pal*16+nib);
@@ -400,7 +540,7 @@
                          s_spr_hi[sx] = (uint8_t)pri;
                          drawn[sx] = 1;
                      }
-@@ -750,7 +835,7 @@
+@@ -750,7 +843,7 @@
                      int ext = pal == 0 ? gvdp_sprite_pattern_line(sz,(unsigned)tileno) : 0;
                      s_spr_idx[sx] = ext ? (uint8_t)(GVDP_HOST_PALETTE_BASE + (ext - 1) * 16 + nib)
                                          : (uint8_t)(pal * 16 + nib);
@@ -409,7 +549,7 @@
                      s_spr_hi[sx]  = (uint8_t)pri;
                      drawn[sx] = 1;
                  }
-@@ -770,7 +855,7 @@
+@@ -770,7 +863,7 @@
  {
      if (!gvdp_display_enabled(v)) return;
      int w = gvdp_screen_width(v);
@@ -418,7 +558,7 @@
      /* Same centered authentic origin as gvdp_render_scanline, including an
       * odd-width canvas. Do not substitute native width: the existing sprite
       * pixel budget and clipping use the complete output width. */
-@@ -877,8 +962,9 @@
+@@ -877,8 +970,9 @@
   * per raster line. Raster-indexed lookups (hscroll table, window boundary)
   * use the raster line; plane/sprite vertical addressing runs in double-res
   * space with 8x16 cells. */
@@ -430,7 +570,7 @@
      int w = gvdp_screen_width(v);
      int content_extra = clamp_ws_extra(w);  /* genuine widened content per side; 0 = authentic */
      int content_block = w + 2 * content_extra;
-@@ -929,6 +1015,12 @@
+@@ -929,6 +1023,12 @@
      int vs_mask = im2 ? 0x7FF : 0x3FF;
      int full_vs_a = v->vsram[0] & vs_mask;
      int full_vs_b = v->vsram[1] & vs_mask;
@@ -443,10 +583,14 @@
  
      /* These registers cannot change while a completed scanline is rendered.
       * Resolve their row-invariant portions once rather than once per pixel. */
-@@ -941,6 +1033,10 @@
+@@ -941,6 +1041,14 @@
  
      /* Sprite layer for this output row (placed in centered output-column space). */
      sprite_render_line(v, line, total, offset);
++    if(s_visual_pass&&s_visual_audit){
++        memcpy(s_base_idx,s_spr_idx,(size_t)total);memcpy(s_base_op,s_spr_op,(size_t)total);
++        memcpy(s_base_hi,s_spr_hi,(size_t)total);memcpy(s_base_order,s_spr_owner,(size_t)total);
++    }
 +    if(s_visual_pass&&s_visual_objects){
 +        GVDPSpriteLayer layer={line,total,offset,s_spr_idx,s_spr_op,s_spr_hi,s_spr_owner};
 +        s_visual_objects(s_visual_objects_user,v,&layer);
@@ -454,20 +598,24 @@
      if (s_host_sprites) {
          GVDPSpriteLayer layer = { line, total, offset, s_spr_idx, s_spr_op, s_spr_hi };
          s_host_sprites(s_host_sprites_user, v, &layer);
-@@ -986,6 +1082,20 @@
+@@ -986,6 +1094,24 @@
      if (pillar > 0) memset(out, bar_idx, (size_t)pillar);
      if (right_bar > 0) memset(out + content_end, bar_idx, (size_t)right_bar);
  
 +#if !GENESIS_BATCHED_PLANES
 +    int rr_ground_a=0,rr_ground_b=0;
-+    if((rr_road_profile==1||rr_road_profile==2)&&s_visual_pass&&(s_visual_surface||content_extra)&&
-+       wt==128&&base_a==0x4000&&base_b==0x6000&&hmode==3&&!im2&&!vmode_2cell&&line<152){
++    /* RR_SPLIT_FINITE */
++    int rr_split_road=s_visual_viewport!=NULL;
++    int rr_view_bounds[2],rr_road_row=s_visual_viewport?
++        s_visual_viewport(s_visual_viewport_user,v,line,rr_view_bounds):line<152;
++    if((rr_road_profile==1||rr_road_profile==2||(rr_split_road&&rr_road_profile==3))&&s_visual_pass&&(s_visual_surface||content_extra)&&
++       wt==128&&base_a==0x4000&&base_b==0x6000&&hmode==3&&!im2&&!vmode_2cell&&rr_road_row){
 +        rr_ground_a=rr_ground_b=1;
 +        for(int n=0;n<8;++n){
 +            uint8_t idx;int op,hi;
-+            fetch_plane_pixel(v,&cache_a,base_a,wt,ht,480+n,line+full_vs_a,im2,&idx,&op,&hi);
++            fetch_plane_pixel(v,&cache_a,base_a,wt,ht,(rr_split_road?0:480)+n,line+full_vs_a,im2,&idx,&op,&hi);
 +            rr_ground_a&=op&&(idx==58||idx==59);
-+            fetch_plane_pixel(v,&cache_b,base_b,wt,ht,480+n,line+full_vs_b,im2,&idx,&op,&hi);
++            fetch_plane_pixel(v,&cache_b,base_b,wt,ht,(rr_split_road?0:480)+n,line+full_vs_b,im2,&idx,&op,&hi);
 +            rr_ground_b&=op&&(idx==58||idx==59);
 +        }
 +    }
@@ -475,7 +623,7 @@
      for (int x = -content_extra, xo = content_start; xo < content_end; x++, xo++) {
  #if GENESIS_BATCHED_PLANES
          uint8_t a_idx = plane_a[xo] & 0x3f, b_idx = plane_b[xo] & 0x3f;
-@@ -1023,8 +1133,46 @@
+@@ -1023,8 +1149,73 @@
          /* Plane B. */
          fetch_plane_pixel(v, &cache_b, base_b, wt, ht,
                            (x - hs_b), (line + vs_b), im2, &b_idx, &b_op, &b_hi);
@@ -489,7 +637,7 @@
 +        int raw_a=(int16_t)vram_read_word(v,(uint16_t)(hbase+hidx*4));
 +        int raw_b=(int16_t)vram_read_word(v,(uint16_t)(hbase+hidx*4+2));
 +        if(rr_road_profile>=2 && wt==128 && base_a==0x4000 && base_b==0x6000 &&
-+           hmode==3 && !im2 && (x<0 || x>=w) && line<152 &&
++           hmode==3 && !im2 && (x<0 || x>=w) && rr_road_row &&
 +           raw_a>=-1024 && raw_a<=-352 && raw_b>=512 && raw_b<=1088) {
 +            int ax=x-raw_a,bx=x-raw_b+1024;
 +            if(ax<320 || ax>=704){a_idx=0;a_op=0;a_hi=0;}
@@ -505,6 +653,32 @@
 +        if((rr_ground_a||rr_ground_b)&&s_visual_pass&&(s_visual_surface||x<0||x>=w)){
 +            int sa=raw_a+(((hs_a-raw_a+512)&1023)-512);
 +            int sb=raw_b+(((hs_b-raw_b+512)&1023)-512);
++            if(rr_split_road){
++                int bottom=line>=112;
++                int ax=x-sa+(bottom?1024:0),bx=x-sb+(bottom?0:1024);
++                if(rr_ground_a){
++                    if(bottom){
++                        if(ax<512){a_idx=0;a_op=0;a_hi=0;}
++                        else if(ax>=1024)fetch_plane_pixel(v,&cache_a,base_a,wt,ht,
++                            1016+(ax&7),line+vs_a,im2,&a_idx,&a_op,&a_hi);
++                    }else{
++                        if(ax>=512){a_idx=0;a_op=0;a_hi=0;}
++                        else if(ax<0)fetch_plane_pixel(v,&cache_a,base_a,wt,ht,
++                            ax&7,line+vs_a,im2,&a_idx,&a_op,&a_hi);
++                    }
++                }
++                if(rr_ground_b){
++                    if(bottom){
++                        if(bx>=512){b_idx=0;b_op=0;b_hi=0;}
++                        else if(bx<0)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
++                            bx&7,line+vs_b,im2,&b_idx,&b_op,&b_hi);
++                    }else{
++                        if(bx<512){b_idx=0;b_op=0;b_hi=0;}
++                        else if(bx>=1024)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
++                            1016+(bx&7),line+vs_b,im2,&b_idx,&b_op,&b_hi);
++                    }
++                }
++            }else{
 +            int ax=x-sa+(rr_road_profile==1?1024:0);
 +            int bx=x-sb+(rr_road_profile==1?0:1024);
 +            if(rr_ground_a){
@@ -517,15 +691,23 @@
 +                    480+(bx&7),line+vs_b,im2,&b_idx,&b_op,&b_hi);
 +                else if(bx<320){b_idx=0;b_op=0;b_hi=0;}
 +            }
++            }
 +        }
 +#endif
          /* Sprite layer (indexed in output-column space). */
          int s_op = s_spr_op[xo], s_hi = s_spr_hi[xo];
          uint8_t s_idx = s_spr_idx[xo];
-@@ -1048,6 +1196,12 @@
+@@ -1048,6 +1239,19 @@
          else                   px = backdrop;
  #endif
  
++        if(s_visual_pass&&s_visual_audit){
++            int op=s_base_op[xo],hi=s_base_hi[xo],visible=op&&(hi||!((a_op&&a_hi)||(b_op&&b_hi)));
++            uint8_t base=visible?s_base_idx[xo]:(a_op&&a_hi)?a_idx:(b_op&&b_hi)?b_idx:a_op?a_idx:b_op?b_idx:backdrop;
++            if(!visible&&s_visual_surface)base=(uint8_t)s_visual_surface(s_visual_surface_user,v,line,x,base);
++            s_background_idx[xo]=base;s_background_owner[xo]=visible?s_base_order[xo]:0;
++            s_plane_high[xo]=(uint8_t)((a_op&&a_hi)||(b_op&&b_hi));
++        }
 +        if(s_visual_audit)s_visible_owner[xo]=
 +            s_op&&(s_hi||!((a_op&&a_hi)||(b_op&&b_hi)))?s_spr_owner[xo]:0;
 +        if(s_visual_pass&&s_visual_surface&&
@@ -535,7 +717,7 @@
          /* Shadow/highlight: when enabled, a pixel with no high-priority layer
           * is shadowed; operator sprites (pal3 colours 14/15) force highlight or
           * shadow on the underlying pixel. */
-@@ -1074,3 +1228,23 @@
+@@ -1074,3 +1278,31 @@
      }
      return total;
  }
@@ -555,8 +737,16 @@
 +    int total=rr_render_scanline(v,line,out);
 +    s_visual_pass=0;
 +    if(!s_visual_sprites&&!s_visual_scroll&&!s_visual_objects&&!s_visual_surface)memcpy(out+(total-width)/2,native,(size_t)width);
++    if(s_visual_viewport){
++        int bounds[2]={0,0},offset=(total-width)/2;
++        int valid=s_visual_viewport(s_visual_viewport_user,v,line,bounds);
++        for(int x=0;x<width;++x)if(!valid||x<bounds[0]||x>=bounds[1]){
++            out[x+offset]=native[x];
++            if(s_visual_audit)s_visible_owner[x+offset]=owners[x];
++        }
++    }
 +    v->sprite_collision=collision;v->sprite_overflow=overflow;
-+    if(s_visual_audit){GVDPVisualAuditRow row={line,width,total,(total-width)/2,native,owners,out,s_visible_owner};s_visual_audit(s_visual_audit_user,v,&row);}
++    if(s_visual_audit){GVDPVisualAuditRow row={line,width,total,(total-width)/2,native,owners,out,s_visible_owner,s_background_idx,s_background_owner,s_plane_high};s_visual_audit(s_visual_audit_user,v,&row);}
 +    return total;
 +}
 --- a/runner/video/genesis_vdp.h
@@ -569,7 +759,7 @@
  } GVDPSpriteLayer;
  typedef void (*GVDPHostSprites)(void *user, const struct GVDP *v,
                                  const GVDPSpriteLayer *layer);
-@@ -163,6 +164,33 @@
+@@ -163,6 +164,39 @@
  int gvdp_sprite_pattern_line(unsigned size_flags, unsigned tile);
  /* Read-only color table for index-to-ARGB sinks; NULL when disabled. */
  const uint32_t *gvdp_host_palette(void);
@@ -597,9 +787,15 @@
 +typedef struct GVDPVisualAuditRow {
 +    int line,native_width,total,offset;
 +    const uint8_t *native_index,*native_owner,*index,*owner;
++    const uint8_t *background_index,*background_owner,*plane_high;
 +} GVDPVisualAuditRow;
 +typedef void (*GVDPVisualAudit)(void *user,const struct GVDP *v,const GVDPVisualAuditRow *row);
 +void gvdp_set_visual_audit(GVDPVisualAudit audit,void *user);
++
++/* Bounds in native raster units; zero means preserve the entire native row.
++ * Used after visual composition so side HUDs cannot inherit road transforms. */
++typedef int (*GVDPVisualViewport)(void *user,const struct GVDP *v,int line,int bounds[2]);
++void gvdp_set_visual_viewport(GVDPVisualViewport viewport,void *user);
  
  /* ---- 68K port interface ($C00000 data, $C00004 control) ------------------ */
  void     gvdp_write_data   (GVDP *v, uint16_t value);
@@ -790,7 +986,16 @@
      if (!c) return 0;
  
      const PlayerInput *pi = &g_input_map.p[player];
-@@ -162,22 +165,26 @@
+@@ -155,6 +158,8 @@
+     for (int b = 0; b < GB_COUNT; b++) {
+         /* In 3-button mode the X/Y/Z/Mode binds are inert. */
+         if (pi->pad_type != PAD_6BUTTON && b >= GB_X) continue;
++        /* Player 1 R2/RT is the campaign checkpoint shortcut. */
++        if (player==0 && pi->pad[b].kind==GP_BIND_AXIS && pi->pad[b].code==SDL_CONTROLLER_AXIS_TRIGGERRIGHT) continue;
+         if (bind_held(c, &pi->pad[b], dz))
+             m |= input_button_bit((GenesisButton)b);
+     }
+@@ -162,22 +167,26 @@
      /* Always-on convenience: left analog stick -> d-pad directions. */
      int lx = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTX);
      int ly = SDL_GameControllerGetAxis(c, SDL_CONTROLLER_AXIS_LEFTY);
@@ -834,3 +1039,76 @@
  
  int     gamepad_turbo_held(void);
  int     gamepad_consume_quicksave(void);
+--- a/recompiler/src/game_config.c
++++ b/recompiler/src/game_config.c
+@@ -638,6 +638,8 @@
+         L->game_mode_addr, L->vint_runcount_addr, L->vint_routine_addr,
+         L->plc_pending_addr, L->initial_ssp, L->vbla_stack, L->intr_stack,
+         L->player_object_addr);
++    if (L->level_mode_count == 0)
++        fprintf(f, " 0"); /* RR_C11_LAYOUT: no empty array initializer. */
+     for (int i = 0; i < L->level_mode_count; i++)
+         fprintf(f, "%s 0x%02Xu", i ? "," : "", L->level_modes[i]);
+     fprintf(f, " },\n"
+--- a/external/m68k-recomp-core/profiles/genesis/code_generator.c
++++ b/external/m68k-recomp-core/profiles/genesis/code_generator.c
+@@ -2790,13 +2790,13 @@
+                 if (addrset_contains(instrs, instr->target_addr)) {
+                     fprintf(f, "  if (%s) {\n", ce);
+                     emit_cycle_accounting(f, "    ", estimate_cycles(instr));
+-                    fprintf(f, "    glue_yield_for_interrupt_poll(); goto label_%06X;\n",
+-                            instr->target_addr);
++                    fprintf(f, "    if(!rr_state_requested || !rr_state_park(0x%06Xu)) glue_yield_for_interrupt_poll(); goto label_%06X;\n",
++                            instr->target_addr, instr->target_addr);
+                     fprintf(f, "  }\n");
+                 } else {
+                     fprintf(f, "  if (%s) {\n", ce);
+                     emit_cycle_accounting(f, "    ", estimate_cycles(instr));
+-                    fprintf(f, "    glue_yield_for_interrupt_poll();\n");
++                    fprintf(f, "    if(!rr_state_requested || !rr_state_park(0x%06Xu)) glue_yield_for_interrupt_poll();\n",instr->target_addr);
+                     emit_split_tail_call(f, "    ", instr->target_addr, *has_sp_adjust != 0,
+                                          -1);
+                     fprintf(f, "  }\n");
+@@ -4889,6 +4889,12 @@
+                     func_addr);
+         else
+             fprintf(f_func, "void func_%06X(void) {\n", func_addr);
++        /* RR_STATE_ENTRY: serialize only at a native instruction boundary. */
++        fprintf(f_func, "  extern int rr_state_requested; extern int rr_state_park(uint32_t);\n");
++        if (has_aliases)
++            fprintf(f_func, "  if(rr_state_requested) rr_state_park(_entry);\n");
++        else
++            fprintf(f_func, "  if(rr_state_requested) rr_state_park(0x%06Xu);\n",func_addr);
+         if (s_reverse_debug) {
+             if (has_aliases) {
+                 fprintf(f_func, "  g_rdb_current_func = _entry;\n");
+@@ -5245,7 +5251,7 @@
+     fprintf(f_dispatch, "    { 0u, NULL }\n};\n\n");
+ 
+     fprintf(f_dispatch,
+-        "static FuncPtr recomp_find_func(uint32_t addr) {\n"
++        "FuncPtr recomp_find_func(uint32_t addr) {\n"
+         "    int lo = 0, hi = %d;\n"
+         "    while (lo < hi) {\n"
+         "        int mid = lo + (hi - lo) / 2;\n"
+--- a/runner/host_state.h
++++ b/runner/host_state.h
+@@ -7,6 +7,7 @@
+ static Uint32 host_state_notice_until;
+ static void host_state_notice(const char *message)
+ {
++    extern void rr_campaign_notice(const char *); rr_campaign_notice(message);
+ #if RECOMP_LAUNCHER
+     if (s_runtime_ui.window) {
+         char title[256]; snprintf(title,sizeof title,"%s - %s",g_game_spec.display_name,message);
+--- a/runner/m68k_interp.c
++++ b/runner/m68k_interp.c
+@@ -309,6 +309,8 @@
+  * routine handled; callers below treat that as an RTS at this PC. */
+ static int interp_game_hook(uint32_t pc)
+ {
++    extern int rr_state_requested; extern int rr_state_park(uint32_t);
++    if(rr_state_requested)rr_state_park(pc); /* RR_INTERPRETED_STATE_BOUNDARY */
+     return game_instruction_hook_site(pc) && genesis_game_instruction_hook(pc);
+ }
+ 

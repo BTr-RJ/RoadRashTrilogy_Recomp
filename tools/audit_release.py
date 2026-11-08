@@ -4,8 +4,10 @@ import argparse
 import hashlib
 import json
 import zipfile
+import re
 
 ROOT=Path(__file__).resolve().parents[1]
+VERSION=re.search(r'project\(RoadRashTrilogyRecomp VERSION ([0-9.]+)',(ROOT/'CMakeLists.txt').read_text())[1]
 
 def audit(output):
     rom_hashes={entry['sha256'] for entry in json.loads((ROOT/'games/supported-roms.json').read_text()).values()}
@@ -13,11 +15,11 @@ def audit(output):
     for line in (output/'SHA256SUMS.txt').read_text().splitlines():
         expected,name=line.split('  ',1);path=output/name
         assert hashlib.sha256(path.read_bytes()).hexdigest()==expected,name
-        assert name.startswith('RoadRashTrilogyRecomp-0.50-'),name
+        assert name.startswith(f'RoadRashTrilogyRecomp-{VERSION}-'),name
         with zipfile.ZipFile(path) as z:
             manifest_name=next(n for n in z.namelist() if n.endswith('/PACKAGE-MANIFEST.json'))
             prefix=manifest_name.removesuffix('PACKAGE-MANIFEST.json');manifest=json.loads(z.read(manifest_name))
-            assert manifest['version']=='0.50' and manifest['roms_included'] is False,name
+            assert manifest['version']==VERSION and manifest['roms_included'] is False,name
             files={e['path']:e for e in manifest['files']}
             actual={n.removeprefix(prefix) for n in z.namelist() if not n.endswith('/') and n!=manifest_name}
             assert actual==set(files),(name,'manifest membership')
@@ -54,4 +56,4 @@ def audit(output):
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('output',type=Path);args=p.parse_args()
-    rows=audit(args.output.resolve());print(json.dumps(dict(version='0.50',packages=rows),indent=2))
+    rows=audit(args.output.resolve());print(json.dumps(dict(version=VERSION,packages=rows),indent=2))

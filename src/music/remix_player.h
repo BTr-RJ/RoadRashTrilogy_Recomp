@@ -12,10 +12,14 @@ void rr_music_stop(void);
 void rr_music_pause(int paused);
 void rr_music_levels(int music_percent,int effects_percent);
 double rr_music_position(void);
+double rr_music_loop_end(void);
 int rr_music_replacing(void);
 void rr_music_mix(int16_t *stereo,size_t frames,double rate);
 const char *rr_music_status(void);
 void rr_music_shutdown(void);
+typedef struct RRMusicState {unsigned cue,paused;double cursor;} RRMusicState;
+void rr_music_capture(RRMusicState *state);
+int rr_music_restore(const RRMusicState *state,int apply);
 #ifdef __cplusplus
 }
 #endif

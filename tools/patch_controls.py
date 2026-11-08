@@ -30,6 +30,10 @@ edit('app_config.c', [('            else if (!strcmp(key, "deadzone")) pi->deadz
 edit('gamepad.h', [('int gamepad_player_connected(int player);',
     'int gamepad_player_connected(int player);\nint gamepad_controller_instance(int slot);')])
 edit('gamepad.c', [('#include <stdio.h>', '#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>'),
+    ('        if (bind_held(c, &pi->pad[b], dz))',
+     '        /* Player 1 R2/RT is the campaign checkpoint shortcut. */\n'
+     '        if (player==0 && pi->pad[b].kind==GP_BIND_AXIS && pi->pad[b].code==SDL_CONTROLLER_AXIS_TRIGGERRIGHT) continue;\n'
+     '        if (bind_held(c, &pi->pad[b], dz))'),
     ('            if (s_pad[0] && ev->cbutton.which == s_pad_jid[0] &&',
      '            if (!getenv("RR_CONTROLS_PROFILE") && s_pad[0] && ev->cbutton.which == s_pad_jid[0] &&'),
     ('    SDL_GameController *c = s_pad[player];\n    if (!c) return 0;',

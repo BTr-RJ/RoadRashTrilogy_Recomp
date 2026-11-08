@@ -17,13 +17,16 @@ static GVDPVisualSprite sprite;
 static GVDPHostSprites objects;
 static GVDPVisualSurface material;
 static GVDPVisualScroll scroll;
+static GVDPVisualAudit audit;
 extern "C" void gvdp_set_visual_sprites(GVDPVisualSprite fn,void*){sprite=fn;}
 extern "C" void gvdp_set_visual_scroll(GVDPVisualScroll fn,void*){scroll=fn;}
 extern "C" void gvdp_set_visual_objects(GVDPHostSprites fn,void*){objects=fn;}
 extern "C" void gvdp_set_visual_surface(GVDPVisualSurface fn,void*){material=fn;}
-extern "C" void gvdp_set_visual_audit(GVDPVisualAudit,void*){}
+extern "C" void gvdp_set_visual_audit(GVDPVisualAudit fn,void*){audit=fn;}
+extern "C" void gvdp_set_visual_viewport(GVDPVisualViewport,void*){}
 extern "C" const uint8_t *gvdp_sprite_patterns(unsigned,unsigned *bytes){*bytes=0;return nullptr;}
 extern "C" int gvdp_sprite_pattern_line(unsigned,unsigned){return 0;}
+extern "C" const uint32_t *gvdp_host_palette(void){return nullptr;}
 static std::array<uint8_t,65536> ram;
 static GVDP v;
 static void word(unsigned at,unsigned value){ram[at]=(uint8_t)(value>>8);ram[at+1]=(uint8_t)value;}
@@ -83,6 +86,24 @@ int main(){
     CHECK(rr::road_vehicle_height(road,2,0,py)&&py==176); // unclipped, not flattened at the HUD
     CHECK(rr::road_vehicle_height(road,.25,0,py)&&py==876); // finite near-camera continuation
     CHECK(!rr::road_vehicle_height(road,.249,0,py));
+    // Actual road positions use relative Z+1 while sprite scale uses Z+2.
+    // Reusing the artwork divisor moves a near foot by tens of pixels.
+    road.position_bias=1;road.camera=10.5;road.has_height=true;
+    for(unsigned i=0;i<32;++i){road.world_y[i]=93;road.y[i]=76+93./(1+i-.5);}
+    CHECK(rr::road_vehicle_height(road,2.5,0,py)&&py==138);
+    CHECK(rr::road_point(road,2.5,py,clip)&&std::abs(py-138)<1e-9);
+    CHECK(rr::road_depth(road,138,z,depth)&&std::abs(depth-2.5)<1e-9);
+    CHECK(rr::road_vehicle_height(road,1,0,py)&&py==448); // finite near pass
+    auto previous=road,current=road;previous.camera=9.5;current.camera=10;
+    for(int i=0;i<32;++i){previous.world_y[i]=100+5*i;previous.x[i]=i*i;
+        current.world_y[i]=100+5*(i+1)-8;current.x[i]=(i+1)*(i+1)+6+2*i;}
+    auto projected=rr::road_camera_basis(current,previous,10.25);
+    CHECK(projected.world_y[12]==current.world_y[12]-4);
+    CHECK(std::abs(projected.x[12]-(current.x[12]+15))<1e-9);
+    CHECK(projected.y==current.y&&projected.clip==current.clip&&projected.camera==current.camera);
+    // An incomplete/nonrigid road update cannot invent a camera translation.
+    for(int i=0;i<32;++i)current.world_y[i]+=i*4;
+    CHECK(rr::road_camera_basis(current,previous,10.25).world_y==current.world_y);
 
     _putenv_s("RR_GEOMETRY","1");_putenv_s("RR_ORGANIC","1");_putenv_s("RR_TRAFFIC_ZOOM","0");
     std::vector<uint8_t> rom(0x3c000);rom[0x3bf21]=0x80; // image 1 -> $80
@@ -260,6 +281,7 @@ int main(){
     rr_geometry_scenery(0,0xff7000,0x1234,0,ram.data());
     rr_geometry_job_begin(0,0xff7000,ram.data());word(0xde64,4);rr_geometry_job_end(ram.data());
     CHECK(sprite(nullptr,&v,0,bounds)&&bounds[2]>bounds[0]);
+    rr_geometry_enable_coverage(1);
     // A nominally visible but completely transparent source replacement must
     // leave the committed native assembly visible, too.
     rr_geometry_reset();rr_geometry_frame(62,1);word(0x7004,16384);word(0xde64,0);
@@ -268,6 +290,7 @@ int main(){
     rr_geometry_scenery(0,0xff7000,0x1234,0,ram.data());
     rr_geometry_job_begin(0,0xff7000,ram.data());word(0xde64,4);rr_geometry_job_end(ram.data());
     CHECK(sprite(nullptr,&v,0,bounds)&&bounds[2]>bounds[0]);
+    rr_geometry_enable_coverage(0);
     // Distant, subpixel world grass must retain the authored raster stipple.
     // Replacing the minor shade with the dominant color erases the whole field.
     rr_geometry_reset();ram.fill(0);v=GVDP{};
@@ -361,7 +384,7 @@ int main(){
     CHECK(near_width>32);
     // A qualified source pose must sample original detail at the NEW scale,
     // rather than enlarge the already minified all-blue native bitmap.
-    rr_geometry_reset();rr_geometry_frame(230,1);word(0x7004,4096);word(0x7008,7);
+    rr_geometry_enable_coverage(1);rr_geometry_reset();rr_geometry_frame(230,1);word(0x7004,4096);word(0x7008,7);
     rom[0x3bf38]=2;rom[0x3bf39]=0x40;std::memcpy(rom.data()+0x240,rom.data()+0x140,78);
     for(int y=0;y<8;++y)for(int x=0;x<8;++x)rom[0x246+y*9+x]=0x12;
     rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor(0,0xff7000,0xff2300,ram.data());rr_geometry_actor_end(0,0xff7000,ram.data());
@@ -378,6 +401,24 @@ int main(){
     rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor(0,0xff7000,0xff2300,ram.data());rr_geometry_actor_end(0,0xff7014,ram.data());
     word(0xde64,0);rr_geometry_job_begin(0,0xff7000,ram.data());word(0xde64,1);rr_geometry_job_end(ram.data());
     CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()==8);CHECK(edge_index[214]==19); // unsupported recolor stays native
+    // Exercise the actual audit -> RGBA overlay path, with a native foreground
+    // owner and the HUD outside the race rectangle. This also uses the rejected
+    // recolor above, so a wrong ROM color must not leak through the new resolver.
+    CHECK(audit);v.reg[1]=0x40;v.cram[19]=0x000e;
+    std::array<uint8_t,426> bg{},own{},hi{};std::array<uint32_t,426> rgba;
+    rgba.fill(0xff123456);GVDPVisualAuditRow row{};row.line=wide_layer.line;row.total=426;row.offset=53;
+    row.background_index=bg.data();row.background_owner=own.data();row.plane_high=hi.data();
+    audit(nullptr,&v,&row);rr_geometry_resolve(&v,row.line,rgba.data(),426);
+    CHECK(std::find(rgba.begin(),rgba.end(),0xffff0000)!=rgba.end());
+    row.total=320;row.offset=0;rgba.fill(0xff123456);
+    audit(nullptr,&v,&row);rr_geometry_resolve(&v,row.line,rgba.data(),320);
+    CHECK(std::find(rgba.begin(),rgba.begin()+320,0xffff0000)!=rgba.begin()+320);
+    CHECK(rgba[320]==0xff123456);row.total=426;row.offset=53;
+    own.fill(1);rgba.fill(0xff123456);audit(nullptr,&v,&row);rr_geometry_resolve(&v,row.line,rgba.data(),426);
+    CHECK(std::all_of(rgba.begin(),rgba.end(),[](uint32_t c){return c==0xff123456;}));
+    own.fill(0);row.line=152;rgba.fill(0xff123456);audit(nullptr,&v,&row);rr_geometry_resolve(&v,row.line,rgba.data(),426);
+    CHECK(std::all_of(rgba.begin(),rgba.end(),[](uint32_t c){return c==0xff123456;}));
+    rr_geometry_enable_coverage(0);
     // Real vehicle depth calibration: follow the current hill, preserve the
     // player's size reference, and move the crest mask independently of zoom.
     rr_geometry_reset();ram.fill(0);v=GVDP{};v.reg[5]=0x60;v.reg[12]=1;
@@ -454,14 +495,14 @@ int main(){
     // forward artwork growing through the short pass, then exit below the viewport;
     // never reinterpret the two HUD copies as a giant forward assembly.
     rr_geometry_reset();word(0x7006,224);
-    for(unsigned i=0;i<32;++i){word(0x310a+i*4,0);word(0x310c+i*4,200);
-        word(0xd77c+i*2,std::min(152u,76+200/(2+i)));}
-    projected_actor(350,14u<<16,6827,109);wide_layer.line=100;CHECK(extent()>0);
-    projected_actor(354,(10u<<16)+32768,16384,156);wide_layer.line=130;
+    for(unsigned i=0;i<32;++i){word(0x310a+i*4,0);word(0x310c+i*4,80);
+        word(0xd77c+i*2,std::min(152u,76+80/(1+i)));}
+    projected_actor(350,14u<<16,6827,92);wide_layer.line=90;CHECK(extent()>0);
+    projected_actor(354,(10u<<16)+32768,16384,129);wide_layer.line=125;
     int player_plane_width=extent();CHECK(player_plane_width==16);
     longword(0x38ac,0xff8000);longword(0x38d0,0xff9000);word(0xd34a,1);
-    word(0x8000,244);word(0x8002,(7<<8)|1);word(0x8004,0xa001);word(0x8006,280);
-    word(0x8008,276);word(0x800a,4<<8);word(0x800c,0xa009);word(0x800e,280);
+    word(0x8000,217);word(0x8002,(7<<8)|1);word(0x8004,0xa001);word(0x8006,280);
+    word(0x8008,249);word(0x800a,4<<8);word(0x800c,0xa009);word(0x800e,280);
     std::memset(ram.data()+0x9000,0x11,320);std::memcpy(v.vram+32,ram.data()+0x9000,320);
     std::memcpy(v.vram+0xc000,ram.data()+0x8000,16);
     rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor(0,0xff7000,0xff2300,ram.data());rr_geometry_actor_end(0,0xff7014,ram.data());
@@ -505,7 +546,7 @@ int main(){
     rr_geometry_reset();word(0x7008,4);word(0x700a,0x80);word(0x7006,152);
     longword(0x1e68,10u<<16);ram[0x2368]=0x40;
     for(unsigned i=0;i<32;++i){word(0x310a+i*4,0);word(0x310c+i*4,200);
-        word(0xd77c+i*2,std::min(152u,76+200/(2+i)));}
+        word(0xd77c+i*2,std::min(152u,76+200/(1+i)));}
     word(0x2330,(unsigned)(uint16_t)-40);word(0x7000,152);projected_actor(400,13u<<16,8192,116);
     word(0x2330,0);word(0x7000,160);projected_actor(404,13u<<16,8192,116);
     word(0x2330,(unsigned)(uint16_t)-40);word(0x7000,152);projected_actor(408,13u<<16,8192,116);
@@ -531,13 +572,13 @@ int main(){
     // Mid-distance builder gaps keep a verified live, unchanged vehicle.
     // A changed animation state, actual removal, a crest and stale evidence
     // must not be mistaken for a transient upload gap.
-    word(0x7000,156);projected_actor(416,18u<<16,4096,96);wide_layer.line=95;
+    word(0x7000,156);projected_actor(416,18u<<16,4096,98);wide_layer.line=96;
     CHECK(extent()>0);
     rr_geometry_frame(417,1);rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor_end(0,0xff7000,ram.data());
-    v.scanline=95;CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()>0);
+    v.scanline=96;CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()>0);
     ram[0x236e]=1;rr_geometry_frame(418,1);rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor_end(0,0xff7000,ram.data());
     CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()==0);
-    ram[0x236e]=0;projected_actor(419,18u<<16,4096,96);CHECK(extent()>0);
+    ram[0x236e]=0;projected_actor(419,18u<<16,4096,98);CHECK(extent()>0);
     word(0xd77e,80);rr_geometry_frame(420,1);rr_geometry_actor_begin(0,0xff7000,0xff2300);rr_geometry_actor_end(0,0xff7000,ram.data());
     CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()==0); // current crest still masks the held pose
     rr_geometry_frame(432,1);CHECK(sprite(nullptr,&v,0,bounds));CHECK(extent()==0);

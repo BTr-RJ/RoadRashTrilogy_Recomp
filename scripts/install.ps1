@@ -28,7 +28,7 @@ foreach ($folder in $romFolders) { if (-not (Test-Path -LiteralPath $folder)) { 
 Write-Output '[STAGE 1/7] Preparing installation folder'
 New-Item -ItemType Directory -Path $installRoot -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $installRoot '.local') -Force | Out-Null
-@{product='RoadRashTrilogyRecomp';version='0.50';status='installing'} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
+@{product='RoadRashTrilogyRecomp';version='0.60';status='installing'} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 if ($sourceRoot -ne $installRoot) {
     foreach ($name in @('src','tools','scripts','games','assets','patches','docs','tests','music')) {
         $from=Join-Path $sourceRoot $name
@@ -88,7 +88,7 @@ Write-Output '[STAGE 7/7] Finalizing installation'
 $installedGames=@()
 foreach ($game in @('rr1','rr2','rr3')) { if (Test-Path -LiteralPath (Join-Path $installRoot "build/native/bin/$game/$game.exe")) { $installedGames+=$game } }
 if ($installedGames.Count -eq 0) { throw 'No game executable was produced.' }
-@{product='RoadRashTrilogyRecomp';version='0.50';games=$installedGames;installed_utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
+@{product='RoadRashTrilogyRecomp';version='0.60';games=$installedGames;installed_utc=[DateTime]::UtcNow.ToString('o')} | ConvertTo-Json | Set-Content -LiteralPath $marker -Encoding UTF8
 $shortcut=Join-Path $installRoot 'Road Rash Trilogy Recomp.lnk'
 if (Test-Path -LiteralPath (Join-Path $installRoot 'RoadRashTrilogyRecomp.exe')) {
     $link=(New-Object -ComObject WScript.Shell).CreateShortcut($shortcut)

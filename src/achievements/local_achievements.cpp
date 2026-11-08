@@ -12,6 +12,7 @@ static bool panel,persistent,was_racing;
 static std::filesystem::path path;
 static std::string toast;
 static uint32_t toast_ticks;
+static unsigned quiet_ticks;
 static void save() {
     if(!persistent||path.empty())return;
     std::error_code error;std::filesystem::create_directories(path.parent_path(),error);
@@ -33,6 +34,7 @@ static void award(unsigned id) {
     std::fprintf(stderr,"[RR LOCAL ACHIEVEMENT] %u %s\n",id,names[id]);
 }
 extern "C" void rr_local_frame(int racing,unsigned speed,unsigned,int paused) {
+    if(quiet_ticks)--quiet_ticks;
     if(toast_ticks&&!--toast_ticks)toast.clear();
     if(racing&&!was_racing){++sessions;save();}was_racing=racing!=0;
     if(!racing||paused||speed>0x7fff)return;
@@ -43,8 +45,9 @@ extern "C" void rr_local_frame(int racing,unsigned speed,unsigned,int paused) {
     if(driving&&driving%1800==0)save();
 }
 extern "C" void rr_local_toggle(){panel=!panel;}
+extern "C" void rr_local_state_loaded(){panel=false;toast.clear();toast_ticks=0;quiet_ticks=360;}
 extern "C" int rr_local_panel(){return panel;}
 extern "C" const char *rr_local_title(unsigned i){return i<6?names[i]:"";}
 extern "C" int rr_local_unlocked(unsigned i){return i<6&&(unlocked&(1u<<i));}
-extern "C" const char *rr_local_toast(){return toast.c_str();}
+extern "C" const char *rr_local_toast(){return quiet_ticks?"":toast.c_str();}
 extern "C" unsigned rr_local_count(){return 6;}

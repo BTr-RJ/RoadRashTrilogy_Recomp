@@ -35,6 +35,23 @@ F6 opens local achievements. The launcher profile disables the engine's fixed
 shoulder-button snapshot shortcuts and Back-button turbo shortcut, allowing
 those buttons to be used as regular mapped inputs.
 
+## Campaign checkpoint (0.60)
+
+After a single-player campaign race ends, the game automatically replaces its
+previous campaign checkpoint. Press **F1** or the assigned Player 1 controller's
+**R2 / RT** to load it, including after restarting the game. Holding the trigger
+loads once; release it before loading again. This shortcut uses the latest
+automatic checkpoint, independently of the engine's numbered manual slots.
+Player 1's R2 / RT axis is reserved for this shortcut; choose another control
+for a Genesis action previously assigned to it. Player 2 mappings are unchanged.
+
+Each game has its own file in `.local/saves/rrN-campaign.state` under the launcher
+root, or `saves/` beside the executable when launched directly. Saving is atomic;
+a failed save retains the previous checkpoint. Files are tied to the exact
+local build and ROM; an incompatible or damaged file is rejected. Untouched
+attract demonstrations and split-screen sessions do not replace campaign saves.
+Existing achievements, control profiles and original ROMs are independent.
+
 ## Launcher navigation
 
 Tab moves through native controls; Shift+Tab moves back. Arrow keys or the

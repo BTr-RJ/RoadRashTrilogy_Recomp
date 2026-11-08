@@ -19,12 +19,22 @@ int wmain(int argc,wchar_t **argv){
         _wputenv_s(L"RR_ROOT",installed.c_str());_putenv_s("RR_MUSIC","dean-harris");
         for(auto game:{"rr1","rr2","rr3"}){
             rr_music_init(game);
-            std::ifstream manifest(installed/L"music/dean-harris"/(std::string(game)+".tsv"));
+            auto pack=installed/L".local/music/dean-harris";
+            if(!fs::exists(pack/(std::string(game)+".tsv")))pack=installed/L"music/dean-harris";
+            std::ifstream manifest(pack/(std::string(game)+".tsv"));
             CHECK(manifest.good());std::string line;unsigned game_count=0;
             while(std::getline(manifest,line)){
                 CHECK(rr_music_start((unsigned)std::strtoul(line.c_str(),nullptr,10)));
                 std::vector<int16_t> samples(176400,0);rr_music_mix(samples.data(),88200,44100);
                 CHECK(rr_music_position()>1.999);
+                // Exercise the musical endpoint and two complete wraps without
+                // waiting in wall-clock time or changing any audio recording.
+                double end=rr_music_loop_end();CHECK(end>120);
+                RRMusicState state;rr_music_capture(&state);state.cursor=(end-.05)*44100.;
+                CHECK(rr_music_restore(&state,1));
+                std::fill(samples.begin(),samples.end(),0);rr_music_mix(samples.data(),88200,44100);
+                CHECK(std::abs(rr_music_position()-1.95)<.0001);
+                std::printf("%s cue=%lu loop_end=%.6f wrap=%.6f\n",game,std::strtoul(line.c_str(),nullptr,10),end,rr_music_position());
                 // Introductory silence is valid audio; require audible output
                 // across the pack, not in every track's opening 100 ms.
                 if(std::any_of(samples.begin(),samples.end(),[](auto value){return value!=0;}))++audible;
@@ -47,6 +57,10 @@ int wmain(int argc,wchar_t **argv){
     CHECK(rr_music_start(1));rr_music_levels(20,100);
     std::vector<int16_t> buffer(4410*2,0);rr_music_mix(buffer.data(),4410,44100);
     CHECK(rr_music_position()>.099&&rr_music_position()<.101);
+    RRMusicState loop;rr_music_capture(&loop);loop.cursor=44100.-100.;CHECK(rr_music_restore(&loop,1));
+    std::vector<int16_t> wraps(88200*2,0);rr_music_mix(wraps.data(),88200,44100);
+    CHECK(std::abs(rr_music_position()-(1.-100./44100.))<1e-7);
+    loop.cursor=0;CHECK(rr_music_restore(&loop,1));rr_music_mix(buffer.data(),4410,44100);
     double held=rr_music_position();rr_music_pause(1);std::fill(buffer.begin(),buffer.end(),1234);
     rr_music_mix(buffer.data(),4410,44100);CHECK(rr_music_position()==held);
     for(auto x:buffer)CHECK(x==1234);

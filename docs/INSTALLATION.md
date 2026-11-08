@@ -1,4 +1,4 @@
-# Installing version 0.50
+# Installing version 0.60
 
 Use Windows 10/11 x64 and a writable folder. Extract the complete Windows-x64
 release ZIP before running `RoadRashTrilogyRecomp.exe`. Keep the executable,
@@ -58,7 +58,7 @@ Launcher settings: `.local/launcher.ini`. Controls: `.local/controls.ini`.
 Each locally built game keeps its own settings and saves beside its executable
 under `build/native/bin/rr1`, `rr2` or `rr3`. Keep these when moving installations.
 Private ROMs and generated inputs remain under `.local/`. Logs are under
-`.local/logs/`; the installer log is `.local/install-0.50.log` in the package
+`.local/logs/`; the installer log is `.local/install-0.60.log` in the package
 you launched. **Open logs** opens that folder.
 
 To add another game, reopen Install games and select the existing recognized
@@ -77,6 +77,14 @@ system service, registry installation or global PATH change.
   folders marked as this product's installation.
 - **Compilation failed:** retain the installation log and check free space and
   C++ tools. Stopping installation never changes your original ROM folder.
+- **MSVC 2019 C2059 in `rr1_layout.c` (line 13):** the original v0.50 SDK
+  emits an empty `level_modes` initializer that this compiler rejects. The
+  corrected build pipeline emits `{ 0 }` while preserving the zero mode count.
+  Apply the corrected source tools to the existing installation and rerun
+  `scripts/build.ps1 -BuildFolder build/native`; the generator rebuilds and
+  refreshes the game sources automatically. Editing generated C is temporary
+  and will be undone by regeneration. Full VS2019 compatibility is not yet
+  qualified; Visual Studio 2022 remains the supported build environment.
 - **Missing files:** extract the whole ZIP again; do not run the EXE inside ZIP.
 
 For bug reports, provide the version, Windows version, GPU, ROM SHA-256 and the

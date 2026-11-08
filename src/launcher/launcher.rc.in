@@ -1,8 +1,8 @@
 #pragma code_page(65001)
 101 ICON "app.ico"
 1 VERSIONINFO
-FILEVERSION 0,50,0,0
-PRODUCTVERSION 0,50,0,0
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,0,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,0,0
 FILEFLAGSMASK 0x3fL
 FILEFLAGS 0x0L
 FILEOS 0x40004L
@@ -15,11 +15,11 @@ BEGIN
     BEGIN
       VALUE "CompanyName", "Road Rash Trilogy Recomp contributors\0"
       VALUE "FileDescription", "Road Rash Trilogy Recomp launcher and installer\0"
-      VALUE "FileVersion", "0.50\0"
+      VALUE "FileVersion", "@PROJECT_VERSION@\0"
       VALUE "InternalName", "TrilogyLauncher\0"
       VALUE "OriginalFilename", "RoadRashTrilogyRecomp.exe\0"
       VALUE "ProductName", "Road Rash Trilogy Recomp\0"
-      VALUE "ProductVersion", "0.50\0"
+      VALUE "ProductVersion", "@PROJECT_VERSION@\0"
     END
   END
   BLOCK "VarFileInfo"

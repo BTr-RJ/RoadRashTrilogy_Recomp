@@ -147,7 +147,7 @@ static void launch() {
     };
     set(L"video",L"fullscreen",fullscreen); set(L"video",L"window_scale",3);
     set(L"video",L"linear_filter",filter==1); set(L"audio",L"volume",volume);
-    set(L"rewind",L"enabled",0); // snapshots are not qualified for these adapters yet
+    set(L"rewind",L"enabled",0); // Campaign checkpoints use their own persistent slot.
     rr_controls_write(config);
     SetEnvironmentVariableA("RR_CONTROLS_PROFILE","1");
     std::wstring width=std::to_wstring(widths[output_size]), height=std::to_wstring(heights[output_size]);
@@ -251,7 +251,7 @@ static LRESULT CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             SendMessageW(check_wide,BM_SETCHECK,wide_view?BST_CHECKED:BST_UNCHECKED,0);
             check_geometry=control(L"BUTTON",L"Continuous zoom and smooth movement",BS_AUTOCHECKBOX|WS_TABSTOP,28,260,440,28,5);
             SendMessageW(check_geometry,BM_SETCHECK,geometry?BST_CHECKED:BST_UNCHECKED,0);
-            control(L"STATIC",L"Pixel-art proportions are preserved with every filter.\nWidescreen CRT uses the complete viewport.\nSmooth zoom applies to single-player races.\nMenus, pause and split screen keep their original look.",0,28,310,440,90,0);
+            control(L"STATIC",L"Pixel-art proportions are preserved with every filter.\nWidescreen CRT uses the complete viewport.\nSmooth zoom supports solo and split-screen races.\nMenus and paused motion keep their original timing.",0,28,310,440,90,0);
         } else if(dialog_page==1) {
             label_volume=control(L"STATIC",L"Master volume",0,28,22,420,24,0);
             slider_volume=control(TRACKBAR_CLASSW,L"",TBS_AUTOTICKS|WS_TABSTOP,28,46,420,32,10);
@@ -392,7 +392,7 @@ static void render(HWND hwnd,HDC dc) {
     std::wstring ra_state=L"Local achievements / F6 in game\nYour progress stays on this PC.";
     text(g,ra_state.c_str(),952,609,284,48,15,muted);
     text(g,L"Arrow keys / D-pad: choose     Enter / A: play",42,128,1000,20,14,muted);
-    text(g,L"v0.50 / Windows x64",1040,762,200,22,14,muted);
+    text(g,L"v0.60 / Windows x64",1040,762,200,22,14,muted);
     Graphics screen(dc);screen.DrawImage(&buffer,0,0);
 }
 static void paint(HWND hwnd){PAINTSTRUCT ps;auto dc=BeginPaint(hwnd,&ps);render(hwnd,dc);EndPaint(hwnd,&ps);}
@@ -489,7 +489,7 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     RECT work;SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     int initial_w=std::min((LONG)(1300*dpi_scale),work.right-work.left),initial_h=std::min((LONG)(850*dpi_scale),work.bottom-work.top);
     if(qa_width>=920&&qa_height>=600){initial_w=qa_width;initial_h=qa_height;}
-    HWND hwnd=CreateWindowExW(qa?WS_EX_NOACTIVATE:0,klass.lpszClassName,L"Road Rash Trilogy Recomp - 0.50",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-initial_w)/2,work.top+(work.bottom-work.top-initial_h)/2,initial_w,initial_h,nullptr,nullptr,app,nullptr);
+    HWND hwnd=CreateWindowExW(qa?WS_EX_NOACTIVATE:0,klass.lpszClassName,L"Road Rash Trilogy Recomp - 0.60",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-initial_w)/2,work.top+(work.bottom-work.top-initial_h)/2,initial_w,initial_h,nullptr,nullptr,app,nullptr);
     ShowWindow(hwnd,qa?SW_SHOWNOACTIVATE:show);UpdateWindow(hwnd);
     if(!qa_capture.empty()){if(qa_page==L"controls")rr_controls_show(hwnd);else if(qa_page==L"install")rr_install_show(hwnd);else if(qa_page==L"video")show_dialog(0);else if(qa_page==L"audio")show_dialog(1);else if(qa_page==L"achievements")show_dialog(2);}
     MSG message;while(GetMessageW(&message,nullptr,0,0)>0){if(rr_controls_message(message)||rr_install_message(message))continue;if(dialog&&IsDialogMessageW(dialog,&message))continue;if(!dialog&&IsDialogMessageW(hwnd,&message))continue;TranslateMessage(&message);DispatchMessageW(&message);}

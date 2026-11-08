@@ -24,7 +24,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -BuildFold
 
 Only games with private verified manifests are built. `-Target TrilogyLauncher`
 rebuilds just the launcher. CMake, the native resource version and the package
-tool use version **0.50**. Dependencies and hashes live in
+tool use version **0.60**. Dependencies and hashes live in
 `tools/public-tools.lock.json`. Runtime fixes are reproducible patch scripts;
 `patches/runtime-integration.patch` is a reviewable generated diff against the
 pinned SDK source. Never edit generated game C.
@@ -36,7 +36,7 @@ pinned SDK source. Never edit generated game C.
 ```
 
 The destination must be fresh. This creates source, standard installer and
-offline installer ZIPs under `dist/0.50`, with per-package file manifests and
+offline installer ZIPs under `dist/0.60`, with per-package file manifests and
 SHA256SUMS. The package tool uses an allowlist and rejects ROMs, private folders
 and unexpected binaries. The only prebuilt application is the ROM-independent
 launcher and its SDL2 DLL. Public SDK caches appear only in the offline package.
@@ -77,7 +77,7 @@ capture scripts are maintained outside the public tree.
 ```powershell
 python tools/audit_repository.py
 python tools/package_release.py --source-only --output build/public-source-check
-python tools/audit_repository.py --package --root build/public-source-check/RoadRashTrilogyRecomp-0.50-source
+python tools/audit_repository.py --package --root build/public-source-check/RoadRashTrilogyRecomp-0.60-source
 ```
 
 The repository and package share an explicit file policy in

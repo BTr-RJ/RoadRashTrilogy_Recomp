@@ -325,3 +325,118 @@ if 'RR_FINITE_PAIR' not in text:
 '''+text[end:]
 path.write_text(text,encoding='utf-8')
 
+
+# Split-screen changes only pixels inside the current road viewport. Merge
+# the authentic pass back into HUD/divider columns after visual composition.
+text=header.read_text(encoding='utf-8')
+if 'GVDPVisualViewport' not in text:
+    text=text.replace('/* ---- 68K port interface', '''/* Bounds in native raster units; zero means preserve the entire native row.
+ * Used after visual composition so side HUDs cannot inherit road transforms. */
+typedef int (*GVDPVisualViewport)(void *user,const struct GVDP *v,int line,int bounds[2]);
+void gvdp_set_visual_viewport(GVDPVisualViewport viewport,void *user);
+
+/* ---- 68K port interface''')
+    header.write_text(text,encoding='utf-8')
+text=path.read_text(encoding='utf-8')
+if 'RR_VISUAL_VIEWPORT' not in text:
+    text=text.replace('static int s_visual_pass;', '''static int s_visual_pass;
+/* RR_VISUAL_VIEWPORT */
+static GVDPVisualViewport s_visual_viewport;
+static void *s_visual_viewport_user;
+void gvdp_set_visual_viewport(GVDPVisualViewport viewport,void *user)
+{s_visual_viewport=viewport;s_visual_viewport_user=user;}''')
+    text=text.replace('    v->sprite_collision=collision;v->sprite_overflow=overflow;', '''    if(s_visual_viewport){
+        int bounds[2]={0,0},offset=(total-width)/2;
+        int valid=s_visual_viewport(s_visual_viewport_user,v,line,bounds);
+        for(int x=0;x<width;++x)if(!valid||x<bounds[0]||x>=bounds[1]){
+            out[x+offset]=native[x];
+            if(s_visual_audit)s_visible_owner[x+offset]=owners[x];
+        }
+    }
+    v->sprite_collision=collision;v->sprite_overflow=overflow;''')
+    # The lower road is below the single-player HUD boundary. The viewport
+    # callback qualifies its rows independently of that historical constant.
+    text=text.replace('    int rr_ground_a=0,rr_ground_b=0;', '''    int rr_ground_a=0,rr_ground_b=0;
+    int rr_view_bounds[2],rr_road_row=s_visual_viewport?
+        s_visual_viewport(s_visual_viewport_user,v,line,rr_view_bounds):line<152;''')
+    text=text.replace('hmode==3&&!im2&&!vmode_2cell&&line<152){',
+                      'hmode==3&&!im2&&!vmode_2cell&&rr_road_row){')
+    text=text.replace('hmode==3 && !im2 && (x<0 || x>=w) && line<152 &&',
+                      'hmode==3 && !im2 && (x<0 || x>=w) && rr_road_row &&')
+    path.write_text(text,encoding='utf-8')
+
+
+# RR_SPLIT_FINITE: split ground is outside source columns 320..703, and
+# the lower camera swaps A/B ownership. Preserve each finite half.
+text=path.read_text(encoding='utf-8')
+if 'RR_SPLIT_FINITE' not in text:
+    text=text.replace('    int rr_view_bounds[2],rr_road_row=',
+                      '    /* RR_SPLIT_FINITE */\n    int rr_split_road=s_visual_viewport!=NULL;\n    int rr_view_bounds[2],rr_road_row=')
+    text=text.replace('if((rr_road_profile==1||rr_road_profile==2)&&s_visual_pass',
+                      'if((rr_road_profile==1||rr_road_profile==2||(rr_split_road&&rr_road_profile==3))&&s_visual_pass')
+    text=text.replace('480+n,line+full_vs_a','(rr_split_road?0:480)+n,line+full_vs_a')
+    text=text.replace('480+n,line+full_vs_b','(rr_split_road?0:480)+n,line+full_vs_b')
+    anchor='            int ax=x-sa+(rr_road_profile==1?1024:0);'
+    assert text.count(anchor)==1
+    begin=text.index(anchor)
+    end=text.index('\n        }\n#endif',begin)
+    original=text[begin:end]
+    replacement='''            if(rr_split_road){
+                int bottom=line>=112;
+                int ax=x-sa+(bottom?1024:0),bx=x-sb+(bottom?0:1024);
+                if(rr_ground_a){
+                    if(bottom){
+                        if(ax<512){a_idx=0;a_op=0;a_hi=0;}
+                        else if(ax>=1024)fetch_plane_pixel(v,&cache_a,base_a,wt,ht,
+                            1016+(ax&7),line+vs_a,im2,&a_idx,&a_op,&a_hi);
+                    }else{
+                        if(ax>=512){a_idx=0;a_op=0;a_hi=0;}
+                        else if(ax<0)fetch_plane_pixel(v,&cache_a,base_a,wt,ht,
+                            ax&7,line+vs_a,im2,&a_idx,&a_op,&a_hi);
+                    }
+                }
+                if(rr_ground_b){
+                    if(bottom){
+                        if(bx>=512){b_idx=0;b_op=0;b_hi=0;}
+                        else if(bx<0)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
+                            bx&7,line+vs_b,im2,&b_idx,&b_op,&b_hi);
+                    }else{
+                        if(bx<512){b_idx=0;b_op=0;b_hi=0;}
+                        else if(bx>=1024)fetch_plane_pixel(v,&cache_b,base_b,wt,ht,
+                            1016+(bx&7),line+vs_b,im2,&b_idx,&b_op,&b_hi);
+                    }
+                }
+            }else{
+'''+original+'\n            }'
+    text=text[:begin]+replacement+text[end:]
+    path.write_text(text,encoding='utf-8')
+
+# RR_COVERAGE_BASE: preserve current planes/unreplaced sprites beneath host art.
+# This surface is presentation-only; guest VDP/status and indexed output remain.
+text=header.read_text(encoding='utf-8')
+if 'background_owner' not in text:
+    text=text.replace('    const uint8_t *native_index,*native_owner,*index,*owner;',
+        '    const uint8_t *native_index,*native_owner,*index,*owner;\n'
+        '    const uint8_t *background_index,*background_owner,*plane_high;')
+    header.write_text(text,encoding='utf-8')
+text=path.read_text(encoding='utf-8')
+if 'RR_COVERAGE_BASE' not in text:
+    text=text.replace('static int s_visual_pass;', 'static int s_visual_pass;\n/* RR_COVERAGE_BASE */\n'
+        'static uint8_t s_base_idx[GVDP_MAX_WIDTH],s_base_op[GVDP_MAX_WIDTH],s_base_hi[GVDP_MAX_WIDTH],s_base_order[GVDP_MAX_WIDTH];\n'
+        'static uint8_t s_background_idx[GVDP_MAX_WIDTH],s_background_owner[GVDP_MAX_WIDTH],s_plane_high[GVDP_MAX_WIDTH];')
+    text=text.replace('    if(s_visual_pass&&s_visual_objects){',
+        '    if(s_visual_pass&&s_visual_audit){\n'
+        '        memcpy(s_base_idx,s_spr_idx,(size_t)total);memcpy(s_base_op,s_spr_op,(size_t)total);\n'
+        '        memcpy(s_base_hi,s_spr_hi,(size_t)total);memcpy(s_base_order,s_spr_owner,(size_t)total);\n'
+        '    }\n    if(s_visual_pass&&s_visual_objects){')
+    text=text.replace('        if(s_visual_audit)s_visible_owner[xo]=',
+        '        if(s_visual_pass&&s_visual_audit){\n'
+        '            int op=s_base_op[xo],hi=s_base_hi[xo],visible=op&&(hi||!((a_op&&a_hi)||(b_op&&b_hi)));\n'
+        '            uint8_t base=visible?s_base_idx[xo]:(a_op&&a_hi)?a_idx:(b_op&&b_hi)?b_idx:a_op?a_idx:b_op?b_idx:backdrop;\n'
+        '            if(!visible&&s_visual_surface)base=(uint8_t)s_visual_surface(s_visual_surface_user,v,line,x,base);\n'
+        '            s_background_idx[xo]=base;s_background_owner[xo]=visible?s_base_order[xo]:0;\n'
+        '            s_plane_high[xo]=(uint8_t)((a_op&&a_hi)||(b_op&&b_hi));\n'
+        '        }\n        if(s_visual_audit)s_visible_owner[xo]=')
+    text=text.replace('native,owners,out,s_visible_owner};',
+        'native,owners,out,s_visible_owner,s_background_idx,s_background_owner,s_plane_high};')
+    path.write_text(text,encoding='utf-8')

@@ -1,6 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
+#include <wincrypt.h>
 #include <mfapi.h>
 #include <mfidl.h>
 #include <mfreadwrite.h>
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <algorithm>
 #include "remix_player.h"
+#include "track_windows.h"
 using Microsoft::WRL::ComPtr;
 struct Track {std::vector<float> pcm;unsigned rate=44100;std::string title;std::filesystem::path path;};
 static std::map<unsigned,Track> tracks;
@@ -23,6 +25,34 @@ static bool paused,ready;
 static unsigned current_cue;
 static double music_gain=.20,effects_gain=1.;
 static std::string status="Trilha original";
+static bool source_matches(const std::filesystem::path& path,const char *expected){
+    HCRYPTPROV provider=0;HCRYPTHASH hash=0;bool ok=false;
+    if(!CryptAcquireContextW(&provider,nullptr,nullptr,PROV_RSA_AES,CRYPT_VERIFYCONTEXT))return false;
+    if(CryptCreateHash(provider,CALG_SHA_256,0,0,&hash)){
+        std::ifstream f(path,std::ios::binary);char buffer[65536];ok=f.good();
+        while(ok&&f){f.read(buffer,sizeof buffer);auto n=f.gcount();if(n)ok=CryptHashData(hash,(const BYTE*)buffer,(DWORD)n,0)!=0;}
+        BYTE digest[32];DWORD size=sizeof digest;
+        ok=ok&&f.eof()&&CryptGetHashParam(hash,HP_HASHVAL,digest,&size,0)&&size==32;
+        char hex[65];for(unsigned i=0;i<32;++i)std::sprintf(hex+i*2,"%02x",digest[i]);hex[64]=0;
+        ok=ok&&std::strcmp(hex,expected)==0;CryptDestroyHash(hash);
+    }
+    CryptReleaseContext(provider,0);return ok;
+}
+static void playback_window(const std::filesystem::path& path,Track& track){
+    for(const auto& window:track_windows)if(path.filename()==window.file&&source_matches(path,window.sha256)){
+        auto frames=(size_t)std::llround(window.end*track.rate);
+        if(frames>0&&frames<track.pcm.size()/2){
+            track.pcm.resize(frames*2);
+            // Short fade of the retained tail avoids a seam when an author's
+            // outro overlaps the final reverb; it never touches native effects.
+            size_t fade=std::min(frames,(size_t)(track.rate*.15));
+            for(size_t i=0;i<fade;++i)for(unsigned c=0;c<2;++c)
+                track.pcm[(frames-fade+i)*2+c]*=(float)(fade-1-i)/(float)fade;
+            std::fprintf(stderr,"[RR MUSIC] verified musical loop end=%.6f file=%s\n",window.end,window.file);
+        }
+        break;
+    }
+}
 static bool decode(const std::filesystem::path& path,Track& track) {
     ComPtr<IMFSourceReader> reader;
     HRESULT hr=MFCreateSourceReaderFromURL(path.c_str(),nullptr,&reader);
@@ -45,6 +75,7 @@ static bool decode(const std::filesystem::path& path,Track& track) {
         }
         if(flags&MF_SOURCE_READERF_ENDOFSTREAM)break;
     }
+    playback_window(path,track);
     return !track.pcm.empty();
 }
 extern "C" void rr_music_init(const char *game) {
@@ -102,6 +133,7 @@ extern "C" void rr_music_levels(int music,int effects) {
     music_gain=std::clamp(music,0,100)/100.;effects_gain=std::clamp(effects,0,200)/100.;
 }
 extern "C" double rr_music_position(){return current?cursor/current->rate:0.;}
+extern "C" double rr_music_loop_end(){return current?(current->pcm.size()/2.)/current->rate:0.;}
 extern "C" int rr_music_replacing(){return current!=nullptr;}
 extern "C" void rr_music_mix(int16_t *out,size_t frames,double rate) {
     // Native driver contains effects while a remake replaces BGM. With the
@@ -122,3 +154,15 @@ extern "C" void rr_music_mix(int16_t *out,size_t frames,double rate) {
 }
 extern "C" const char *rr_music_status() {return status.c_str();}
 extern "C" void rr_music_shutdown() {current=nullptr;tracks.clear();if(ready)MFShutdown();ready=false;}
+extern "C" void rr_music_capture(RRMusicState *state){
+    *state={current?current_cue:0u,paused?1u:0u,current?cursor:0.};
+}
+extern "C" int rr_music_restore(const RRMusicState *state,int apply){
+    if(!state||state->paused>1||!std::isfinite(state->cursor)||state->cursor<0||state->cursor>44100.*60.*12.)return 0;
+    if(!apply)return 1;
+    rr_music_stop();
+    if(state->cue&&rr_music_start(state->cue)){
+        cursor=std::fmod(state->cursor,(double)(current->pcm.size()/2));rr_music_pause(state->paused);
+    }
+    return 1;
+}

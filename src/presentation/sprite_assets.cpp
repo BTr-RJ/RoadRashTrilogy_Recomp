@@ -26,6 +26,7 @@ SpriteAsset decode_sprite(const uint8_t *rom,size_t bytes,unsigned table,
         unsigned byte=rom[at+4+y*stride+x/2];
         out.pixels[y*width+x]=(uint8_t)((byte>>((x&1)?0:4))&15);
     }
+    out.coverage.build(out.width,out.height,out.pixels.data());
     return out;
 }
 }

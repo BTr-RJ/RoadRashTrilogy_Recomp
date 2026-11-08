@@ -5,17 +5,18 @@ import hashlib
 import json
 import shutil
 import zipfile
+import re
 
 ROOT=Path(__file__).resolve().parents[1]
-VERSION='0.50'
+VERSION=re.search(r'project\(RoadRashTrilogyRecomp VERSION ([0-9.]+)',(ROOT/'CMakeLists.txt').read_text())[1]
 TOP_FILES=('CMakeLists.txt','.gitignore','README.md','CREDITS.md','THIRD_PARTY_NOTICES.md',
            'CONTRIBUTING.md','Jogar.cmd')
 PUBLIC_TOOLS=('apply_runtime_patches.py','audit_release.py','audit_repository.py',
               'bootstrap_public.py','install_roms.py','package_release.py',
-              'patch_controls.py','patch_engine.py','patch_presentation.py',
+              'patch_controls.py','patch_codegen.py','patch_campaign_states.py','patch_engine.py','patch_presentation.py',
               'patch_raster.py','patch_raster_timing.py','patch_sprite_geometry.py',
               'prepare_runtime_inputs.py','public-tools.lock.json','rr.py','tools.lock.json')
-PUBLIC_DOCS=('BUILDING.md','CONTROLS.md','INSTALLATION.md','RELEASE-0.50.md','VIDEO.md','ROADMAP.md')
+PUBLIC_DOCS=('BUILDING.md','CONTROLS.md','INSTALLATION.md','RELEASE-0.50.md','RELEASE-0.60.md','VIDEO.md','ROADMAP.md')
 PUBLIC_ASSETS=('BARLOW-LICENSE.txt','Barlow-Regular.ttf','BarlowCondensed-Bold.ttf',
                'BarlowCondensed-BoldItalic.ttf','FONT-LICENSE.txt','app.ico',
                'brand-050.png','rr1.png','rr2.png','rr3.png','sources.json')
@@ -37,9 +38,9 @@ def is_public_path(relative):
     if name=='patches/runtime-integration.patch':return True
     if len(parts)==2 and parts[0]=='docs':return parts[1] in PUBLIC_DOCS
     if parts[:2]==('docs','licenses'):return relative.suffix.lower() in ('.md','.txt')
-    if parts[:3]==('docs','media','0.50') and len(parts)==4:
-        return parts[3] in ('comparison.json','rr1-original-vs-zoom-0.50.gif',
-                            'rr2-original-vs-zoom-0.50.gif','rr3-original-vs-zoom-0.50.gif')
+    if parts[:3]==('docs','media',VERSION) and len(parts)==4:
+        return parts[3] in ('comparison.json',f'rr1-original-vs-zoom-{VERSION}.gif',
+                            f'rr2-original-vs-zoom-{VERSION}.gif',f'rr3-original-vs-zoom-{VERSION}.gif')
     if len(parts)==3 and parts[:2]==('assets','launcher'):return parts[2] in PUBLIC_ASSETS
     return relative.suffix.lower() in SOURCE_TYPES.get(parts[0],set())
 
@@ -132,18 +133,18 @@ def archive(directory):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--output',type=Path,default=ROOT/'dist/0.50')
+    parser.add_argument('--output',type=Path,default=ROOT/'dist'/VERSION)
     parser.add_argument('--launcher',type=Path,default=ROOT/'build/release02/bin/TrilogyLauncher.exe')
     parser.add_argument('--offline',action='store_true')
     parser.add_argument('--source-only',action='store_true')
     parser.add_argument('--music-pack',type=Path,help='Include verified mapped remake tracks in installer packages only')
     args=parser.parse_args();out=args.output.resolve();out.mkdir(parents=True,exist_ok=True)
     packages=[]
-    source=out/'RoadRashTrilogyRecomp-0.50-source';stage(ROOT,source);packages.append(archive(source))
+    source=out/f'RoadRashTrilogyRecomp-{VERSION}-source';stage(ROOT,source);packages.append(archive(source))
     if not args.source_only:
-        installer=out/'RoadRashTrilogyRecomp-0.50-Windows-x64';stage(ROOT,installer,args.launcher.resolve(),music_pack=args.music_pack);packages.append(archive(installer))
+        installer=out/f'RoadRashTrilogyRecomp-{VERSION}-Windows-x64';stage(ROOT,installer,args.launcher.resolve(),music_pack=args.music_pack);packages.append(archive(installer))
         if args.offline:
-            installer=out/'RoadRashTrilogyRecomp-0.50-Windows-x64-offline';stage(ROOT,installer,args.launcher.resolve(),True,music_pack=args.music_pack);packages.append(archive(installer))
+            installer=out/f'RoadRashTrilogyRecomp-{VERSION}-Windows-x64-offline';stage(ROOT,installer,args.launcher.resolve(),True,music_pack=args.music_pack);packages.append(archive(installer))
     (out/'SHA256SUMS.txt').write_text(''.join(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}\n' for p in packages),encoding='utf-8')
     for p in packages:print(f'{p.name}: {p.stat().st_size} bytes')
 

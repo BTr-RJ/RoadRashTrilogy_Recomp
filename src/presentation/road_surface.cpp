@@ -1,7 +1,39 @@
 #include "road_surface.h"
 #include <cmath>
 #include <algorithm>
+#include <vector>
 namespace rr {
+RoadRays road_camera_basis(const RoadRays& current,const RoadRays& previous,double camera){
+    auto result=current;double dz=current.camera-previous.camera;
+    if(dz<=1e-6||dz>2||!current.has_height||!previous.has_height)return result;
+    int shift=(int)std::floor(current.camera)-(int)std::floor(previous.camera);
+    std::vector<double> deltas;
+    for(int i=4;i<24;++i)if(i+shift>=0&&i+shift<32)
+        deltas.push_back(current.world_y[i]-previous.world_y[i+shift]);
+    if(deltas.empty())return result;
+    std::sort(deltas.begin(),deltas.end());double delta=deltas[deltas.size()/2];
+    std::vector<double> errors;for(double d:deltas)errors.push_back(std::abs(d-delta));
+    std::sort(errors.begin(),errors.end());
+    double factor=std::clamp((camera-current.camera)/dz,-.5,1.);
+    if(errors[errors.size()/2]<=1.)for(auto& y:result.world_y)y+=delta*factor;
+    if(current.has_x&&previous.has_x){
+        double n=0,sx=0,sy=0,sxx=0,sxy=0;
+        for(int i=4;i<24;++i)if(i+shift>=0&&i+shift<32){
+            double d=current.x[i]-previous.x[i+shift];
+            ++n;sx+=i;sy+=d;sxx+=i*i;sxy+=i*d;
+        }
+        double denominator=n*sxx-sx*sx;
+        if(denominator>0){
+            double slope=(n*sxy-sx*sy)/denominator,intercept=(sy-slope*sx)/n;
+            errors.clear();
+            for(int i=4;i<24;++i)if(i+shift>=0&&i+shift<32)
+                errors.push_back(std::abs(current.x[i]-previous.x[i+shift]-(intercept+slope*i)));
+            std::sort(errors.begin(),errors.end());
+            if(errors[errors.size()/2]<=2.)for(int i=0;i<32;++i)result.x[i]+=(intercept+slope*i)*factor;
+        }
+    }
+    return result;
+}
 int extend_clipped_edge(const std::array<int,152>& edge,unsigned line,int limit,bool maximum){
     if(maximum){
         std::array<int,152> mirrored;
@@ -32,7 +64,7 @@ bool road_depth(const RoadRays& rays,double screen_y,double& world_z,double& dep
         if(screen_y<=rays.y[near]&&screen_y>=rays.y[far]){
             double alpha=(rays.y[near]-screen_y)/(rays.y[near]-rays.y[far]);
             double zn=2.+near-fraction,zf=2.+far-fraction;
-            depth=1./((1-alpha)/zn+alpha/zf);
+            depth=rays.position_bias+1./((1-alpha)/(zn-rays.position_bias)+alpha/(zf-rays.position_bias));
             world_z=rays.camera+depth-2.;return true;
         }
         near=far;
@@ -44,9 +76,9 @@ bool road_point(const RoadRays& rays,double depth,double& screen_y,double& clip_
     if(!std::isfinite(depth)||depth<.25||q>33.)return false;
     int near=std::clamp((int)std::floor(q),0,30);
     double zn=2.+near-fraction,zf=zn+1;
-    double alpha=(1./depth-1./zn)/(1./zf-1./zn);
+    double alpha=(1./road_position_depth(rays,depth)-1./(zn-rays.position_bias))/(1./(zf-rays.position_bias)-1./(zn-rays.position_bias));
     screen_y=rays.y[near]+alpha*(rays.y[near+1]-rays.y[near]);
-    clip_y=152.;
+    clip_y=rays.clip;
     for(int i=0;i<=near&&i<=q;++i)clip_y=std::min(clip_y,rays.y[i]);
     return std::isfinite(screen_y)&&std::isfinite(clip_y);
 }
@@ -62,6 +94,6 @@ bool road_vehicle_height(const RoadRays& rays,double depth,double height,double&
     if(!rays.has_x||!std::isfinite(q)||depth<.25||q>33.)return false;
     int near=std::clamp((int)std::floor(q),0,30);
     double y=rays.world_y[near]+(q-near)*(rays.world_y[near+1]-rays.world_y[near]);
-    screen_y=rays.horizon+(y-height)/depth;return std::isfinite(screen_y);
+    screen_y=rays.horizon+(y-height)*rays.height_scale/road_position_depth(rays,depth);return std::isfinite(screen_y);
 }
 }

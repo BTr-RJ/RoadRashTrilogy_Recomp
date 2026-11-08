@@ -1,9 +1,10 @@
 # Project status
 
-Version 0.50 is an initial Windows x64 public test for the three supported
+Version 0.60 is a Windows x64 public test for the three supported
 Mega Drive / Genesis revisions. Installation, local builds, remappable
-controls, original/remake audio and single-player presentation enhancements
-are available. See [release scope](RELEASE-0.50.md).
+controls, original/remake audio, campaign checkpoints and presentation enhancements
+for single player and original RR2/RR3 split screen are available.
+See [release scope and changes from 0.50](RELEASE-0.60.md).
 
 Areas for further validation include complete campaigns and tracks, specific
 physical controllers, and first-time installation on Windows without C++ tools.

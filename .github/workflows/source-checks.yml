@@ -17,4 +17,4 @@ jobs:
       - name: Audit ROM-free source package
         run: |
           python tools/package_release.py --source-only --output build/ci-public
-          python tools/audit_repository.py --package --root build/ci-public/RoadRashTrilogyRecomp-0.50-source
+          python tools/audit_repository.py --package --root build/ci-public/RoadRashTrilogyRecomp-0.60-source

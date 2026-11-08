@@ -15,8 +15,10 @@ extern "C" void gvdp_set_visual_scroll(GVDPVisualScroll fn,void*){scroll=fn;}
 extern "C" void gvdp_set_visual_objects(GVDPHostSprites,void*){}
 extern "C" void gvdp_set_visual_surface(GVDPVisualSurface,void*){}
 extern "C" void gvdp_set_visual_audit(GVDPVisualAudit,void*){}
+extern "C" void gvdp_set_visual_viewport(GVDPVisualViewport,void*){}
 extern "C" const uint8_t *gvdp_sprite_patterns(unsigned,unsigned *bytes){*bytes=0;return nullptr;}
 extern "C" int gvdp_sprite_pattern_line(unsigned,unsigned){return 0;}
+extern "C" const uint32_t *gvdp_host_palette(void){return nullptr;}
 static GVDP v;
 static std::array<uint8_t,65536> ram;
 static void word(unsigned at,unsigned value){ram[at]=(uint8_t)(value>>8);ram[at+1]=(uint8_t)value;}

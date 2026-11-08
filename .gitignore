@@ -35,6 +35,7 @@ __pycache__/
 !/docs/CONTROLS.md
 !/docs/INSTALLATION.md
 !/docs/RELEASE-0.50.md
+!/docs/RELEASE-0.60.md
 !/docs/VIDEO.md
 !/docs/ROADMAP.md
 /tools/*
@@ -45,6 +46,7 @@ __pycache__/
 !/tools/install_roms.py
 !/tools/package_release.py
 !/tools/patch_controls.py
+!/tools/patch_codegen.py
 !/tools/patch_engine.py
 !/tools/patch_presentation.py
 !/tools/patch_raster.py
@@ -56,3 +58,4 @@ __pycache__/
 !/tools/tools.lock.json
 /patches/*.patch
 !/patches/runtime-integration.patch
+!tools/patch_campaign_states.py

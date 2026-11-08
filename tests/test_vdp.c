@@ -9,11 +9,17 @@ uint32_t rr_raster_phase(void){return phase;}
 static GVDP vdp;
 static void word(unsigned addr,unsigned value){vdp.vram[addr]=(uint8_t)(value>>8);vdp.vram[addr+1]=(uint8_t)value;}
 static int transform_mode;
-static int audit_correct;
+static int audit_correct,coverage_base_test;
+static void cover_object(void *user,const GVDP *v,const GVDPSpriteLayer *layer){
+    (void)user;(void)v;
+    layer->index[61]=2;layer->opaque[61]=1;layer->high[61]=1;layer->owner[61]=3;
+}
 static void audit(void *user,const GVDP *v,const GVDPVisualAuditRow *row){
     (void)user;(void)v;
     if(row->line==40)audit_correct=row->native_index[24]==1&&row->native_owner[24]==1&&
-        row->index[24]==0&&row->index[61]==1&&row->owner[61]==1;
+        row->index[24]==0&&row->index[61]==(coverage_base_test?2:1)&&row->owner[61]==(coverage_base_test?3:1)&&
+        row->background_index&&row->background_owner&&row->plane_high&&
+        row->background_index[61]==1&&row->background_owner[61]==1&&row->plane_high[61]==0;
 }
 static int identity(void *user,const GVDP *v,unsigned slot,double bounds[4]){
     (void)user;unsigned at=0xc000+slot*8;
@@ -33,6 +39,12 @@ static int road_shift(void *user,const GVDP *v,int line,int values[4]){
 static int surface(void *user,const GVDP *v,int line,int x,int index){
     (void)user;(void)v;(void)line;(void)index;
     if(x<surface_min)surface_min=x;if(x>surface_max)surface_max=x;return 7;
+}
+static int viewport(void *user,const GVDP *v,int line,int bounds[2]){
+    (void)user;(void)v;
+    if(line>=8&&line<104){bounds[0]=-54;bounds[1]=208;return 1;}
+    if(line>=112&&line<208){bounds[0]=112;bounds[1]=374;return 1;}
+    return 0;
 }
 static int visual_rect(void *user,const GVDP *v,unsigned slot,double bounds[4]){
     (void)user;(void)v;if(slot>1)return 0;
@@ -63,7 +75,13 @@ int main(void){
     transform_mode=1;gvdp_set_visual_sprites(visual_rect,NULL);
     gvdp_set_visual_audit(audit,NULL);
     CHECK(gvdp_render_scanline(&vdp,40,row)==320);
-    CHECK(audit_correct);gvdp_set_visual_audit(NULL,NULL);
+    CHECK(audit_correct);
+    // Exact current base must precede host replacement; the replacement must
+    // not be composited a second time by the RGBA coverage resolver.
+    coverage_base_test=1;audit_correct=0;gvdp_set_visual_objects(cover_object,NULL);
+    CHECK(gvdp_render_scanline(&vdp,40,row)==320);CHECK(audit_correct);
+    gvdp_set_visual_objects(NULL,NULL);coverage_base_test=0;
+    CHECK(gvdp_render_scanline(&vdp,40,row)==320);gvdp_set_visual_audit(NULL,NULL);
     CHECK(vdp.sprite_collision); // original overlapping SAT still collides
     CHECK(row[24]==0&&row[61]==1&&row[79]==0&&row[81]==1);
     CHECK(gvdp_render_scanline(&vdp,44,row)==320); // transparent source row 3
@@ -171,6 +189,18 @@ int main(void){
     CHECK(!memcmp(row+54,native,320));CHECK(row[14]==1);
     gvdp_evaluate_scanline(&vdp,40);CHECK(!vdp.sprite_collision);
     gvdp_set_ws_extra(0);
+    // Visual road/material work may cover a whole scanline internally. The
+    // final native merge protects both side HUDs, divider and bottom frame.
+    memset(&vdp,0,sizeof vdp);vdp.reg[1]=0x40;vdp.reg[12]=1;
+    vdp.reg[2]=0x30;vdp.reg[4]=7;vdp.reg[5]=0x60;
+    gvdp_set_visual_surface(surface,NULL);gvdp_set_visual_viewport(viewport,NULL);
+    CHECK(gvdp_render_scanline(&vdp,80,row)==320);
+    for(int x=0;x<320;++x)CHECK(row[x]==(x<208?7:0));
+    CHECK(gvdp_render_scanline(&vdp,180,row)==320);
+    for(int x=0;x<320;++x)CHECK(row[x]==(x>=112?7:0));
+    CHECK(gvdp_render_scanline(&vdp,108,row)==320);
+    for(int x=0;x<320;++x)CHECK(row[x]==0);
+    gvdp_set_visual_viewport(NULL,NULL);gvdp_set_visual_surface(NULL,NULL);
     vdp.scanline=0xea;phase=0;CHECK((gvdp_read_hv_counter(&vdp)>>8)==0xea);
     vdp.scanline=0xeb;CHECK((gvdp_read_hv_counter(&vdp)>>8)==0xe5);
     vdp.scanline=0;phase=1500;unsigned h1=gvdp_read_hv_counter(&vdp)&255;

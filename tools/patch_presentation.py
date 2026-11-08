@@ -26,6 +26,12 @@ if 'RR_PRESENT_PROBE' not in old:
     (ROOT/'patches/engine-presentation.patch').write_text(''.join(difflib.unified_diff(old.splitlines(True),new.splitlines(True),fromfile='a/runner/main.c',tofile='b/runner/main.c')),encoding='utf-8')
 print('Applied aspect-preserving presentation and native Slang hook')
 old=p.read_text(encoding='utf-8')
+if 'RR_AUTHOR_SHADER' not in old:
+    new=old.replace('        if (s_color_lut_on) {',
+        '        const char *author_shader=getenv("RR_SHADER_PATH"); /* RR_AUTHOR_SHADER */\n'
+        '        if (s_color_lut_on && (!author_shader || !*author_shader)) {')
+    p.write_text(new,encoding='utf-8')
+old=p.read_text(encoding='utf-8')
 if 'RR_SCRIPT_ERRORS' not in old:
     new=old.replace('    if (input_script_path) input_script_load(input_script_path);',
         '    /* RR_SCRIPT_ERRORS: an invalid explicit replay must not run attract mode. */\n'

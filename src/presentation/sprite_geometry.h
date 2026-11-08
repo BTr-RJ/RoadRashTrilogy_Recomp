@@ -3,9 +3,13 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
-// scene: 0 = native screen, 1 = live single-player race, 2 = paused race.
+// scene: 0 = native screen, 1 = live single-player race, 2 = paused race,
+// 3 = live split-screen race, 4 = paused split-screen race.
 // Paused wide views retain spatial road continuation, without motion/zoom.
 void rr_geometry_frame(uint64_t frame,int scene);
+struct GVDP;
+void rr_geometry_enable_coverage(int enabled);
+void rr_geometry_resolve(const struct GVDP *v,int line,uint32_t *out,int width);
 void rr_geometry_job_begin(int game,uint32_t job,const uint8_t *ram);
 void rr_geometry_job_end(const uint8_t *ram);
 void rr_geometry_reset(void);

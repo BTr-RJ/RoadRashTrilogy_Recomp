@@ -156,7 +156,11 @@ unsigned rr_controls_poll(){
         if(capture<0||!capture_pad||!armed)continue;
         int id=gamepad_controller_instance(g_input_map.p[player].controller_slot);
         if(event.type==SDL_CONTROLLERBUTTONDOWN&&event.cbutton.which==id)pad_binding({GP_BIND_BUTTON,event.cbutton.button,0});
-        if(event.type==SDL_CONTROLLERAXISMOTION&&event.caxis.which==id&&std::abs(event.caxis.value)>20000)pad_binding({GP_BIND_AXIS,event.caxis.axis,event.caxis.value<0?-1:1});
+        if(event.type==SDL_CONTROLLERAXISMOTION&&event.caxis.which==id&&std::abs(event.caxis.value)>20000){
+            if(player==0&&event.caxis.axis==SDL_CONTROLLER_AXIS_TRIGGERRIGHT)
+                hint(L"R2 / RT loads the campaign checkpoint. Choose another input.");
+            else pad_binding({GP_BIND_AXIS,event.caxis.axis,event.caxis.value<0?-1:1});
+        }
     }
     if(panel&&capture>=0&&capture_pad&&!armed){auto c=SDL_GameControllerFromInstanceID(gamepad_controller_instance(g_input_map.p[player].controller_slot));if(c){armed=true;for(int b=0;b<SDL_CONTROLLER_BUTTON_MAX;++b)armed&=!SDL_GameControllerGetButton(c,(SDL_GameControllerButton)b);for(int a=0;a<SDL_CONTROLLER_AXIS_MAX;++a)armed&=std::abs(SDL_GameControllerGetAxis(c,(SDL_GameControllerAxis)a))<12000;}}
     auto c=SDL_GameControllerFromInstanceID(gamepad_controller_instance(0));unsigned now=0;

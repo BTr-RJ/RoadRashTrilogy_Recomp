@@ -1,21 +1,23 @@
 # Road Rash Trilogy Recomp
 
 A native Windows x64 fan project for **Road Rash, Road Rash II and Road Rash 3**
-from the Mega Drive / Genesis. Version **0.50** adds an English launcher,
-remappable controls and an installer that builds the games from your own ROMs.
+from the Mega Drive / Genesis. Version **0.60** improves sprite approach and hill
+placement, adds presentation enhancements to original local split screen, and
+includes campaign checkpoints and looping remake music. The English installer
+builds the games locally from your own ROMs.
 
 ![Road Rash Trilogy Recomp](assets/launcher/brand-050.png)
 
 ## Install and play
 
-**[Download version 0.50](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/tag/v0.50)**
-(initial public test, Windows x64):
+**[Download version 0.60](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/tag/v0.60)**
+(Public Test, Windows x64):
 
-- [Standard installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.50/RoadRashTrilogyRecomp-0.50-Windows-x64.zip)
-- [Offline installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.50/RoadRashTrilogyRecomp-0.50-Windows-x64-offline.zip)
-- [SHA-256 checksums](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.50/SHA256SUMS.txt)
+- [Standard installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/RoadRashTrilogyRecomp-0.60-Windows-x64.zip)
+- [Offline installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/RoadRashTrilogyRecomp-0.60-Windows-x64-offline.zip)
+- [SHA-256 checksums](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/SHA256SUMS.txt)
 
-1. Extract the complete **RoadRashTrilogyRecomp-0.50-Windows-x64.zip** package.
+1. Extract the complete **RoadRashTrilogyRecomp-0.60-Windows-x64.zip** package.
 2. Open **RoadRashTrilogyRecomp.exe** and choose **Install games**.
 3. Select your ROM folder(s) and an empty installation folder.
 4. Let the installer verify your files and compile the supplied games locally.
@@ -36,28 +38,47 @@ but requires Microsoft C++ tools to be installed already for fully offline use.
 See [installation and supported revisions](docs/INSTALLATION.md),
 [controls](docs/CONTROLS.md) and [building from source](docs/BUILDING.md).
 
-## Original Mega Drive vs continuous zoom (0.50)
+## Original Mega Drive vs continuous zoom (0.60)
 
 Each GIF shows the **same replay and the same captured frames** side by side:
-**original Mega Drive rendering on the left**, **version 0.50 continuous zoom
+**original Mega Drive rendering on the left**, **version 0.60 continuous zoom
 on the right**. Both views use 4:3, matching inputs and normal game speed.
 The original view uses the native raster renderer in this project's runtime.
 
 ### Road Rash
 
-![Road Rash: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr1-original-vs-zoom-0.50.gif)
+![Road Rash: synchronized original Mega Drive rendering and version 0.60 continuous zoom](docs/media/0.60/rr1-original-vs-zoom-0.60.gif)
 
 ### Road Rash II
 
-![Road Rash II: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr2-original-vs-zoom-0.50.gif)
+![Road Rash II: synchronized original Mega Drive rendering and version 0.60 continuous zoom](docs/media/0.60/rr2-original-vs-zoom-0.60.gif)
 
 ### Road Rash 3
 
-![Road Rash 3: synchronized original Mega Drive rendering and version 0.50 continuous zoom](docs/media/0.50/rr3-original-vs-zoom-0.50.gif)
+![Road Rash 3: synchronized original Mega Drive rendering and version 0.60 continuous zoom](docs/media/0.60/rr3-original-vs-zoom-0.60.gif)
 
-Captured with the published 0.50 binaries. Each pair preserves guest RAM/VRAM
+Captured with the release-qualified 0.60 local builds. Each pair preserves guest RAM/VRAM
 and the HUD. The 4-second GIFs sample the 59.94 Hz capture at 50 fps, retaining
-the original pixels and elapsed time. [Capture details and hashes](docs/media/0.50/comparison.json).
+the original elapsed time. The native panel is pixel-verified; GIF palette
+quantization approximates some fractional edge colors on the 0.60 panel. [Capture details and hashes](docs/media/0.60/comparison.json).
+
+## What changed from 0.50
+
+- More stable scenery, obstacles, opponents and traffic during approach, with
+  fractional sprite coverage and fewer unnecessary source/bitmap switches.
+- Corrected road-relative placement and stale hill geometry across climbs,
+  descents and crests.
+- Independent presentation enhancements for the original RR2/RR3 local
+  split-screen modes. RR1 keeps its alternating-player mode.
+- Automatic checkpoints after campaign races; **F1** or Player 1 **R2 / RT** loads
+  the latest state. Checkpoints require the exact executable/ROM that saved them.
+- Verified bundled remake tracks omit the common non-musical outro and loop at
+  the musical ending. Original music remains selectable.
+- Authored shader effects with correct widescreen canvas aspect; the authored
+  4:3 presentation remains available, without extra engine color correction.
+- A reproducible C11 emitter fix for the reported installation initializer error.
+
+See [0.60 changes, validation and update notes](docs/RELEASE-0.60.md).
 
 ## Features
 
@@ -65,7 +86,8 @@ the original pixels and elapsed time. [Capture details and hashes](docs/media/0.
 - Remappable keyboard/controller inputs for two original player ports, including
   button/axis capture, controller assignment, deadzone and 3-/6-button pad options.
 - Continuous scenery and vehicle zoom, road/marking smoothing and short visual
-  prediction in recognized single-player races, preserving original game speed.
+  prediction in recognized single-player and original RR2/RR3 split-screen races,
+  preserving original game speed.
 - Source-art margin recovery, continuous approach scaling and road-anchored
   vehicles on curves and hills, preserving the original animation poses.
 - Optional experimental 16:9 expansion, resolution selection and CRT filters
@@ -75,11 +97,12 @@ the original pixels and elapsed time. [Capture details and hashes](docs/media/0.
 
 The games execute translated 68000 code with fallback for remaining paths.
 Complete static coverage and full campaign validation are not claimed. Menus,
-pause and original split screen retain their original raster presentation.
+and paused motion retain native behavior. Original RR2/RR3 split screen uses
+independent enhanced camera views when continuous zoom is enabled.
 Network multiplayer is not implemented. Windows release installers include 18
 Dean Harris remake tracks, installed locally with no separate music download.
 The original soundtrack remains selectable. See [music](music/README.md) and
-[0.50 scope and validation](docs/RELEASE-0.50.md).
+[0.60 scope and validation](docs/RELEASE-0.60.md).
 
 ## Source repository
 

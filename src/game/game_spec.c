@@ -15,6 +15,8 @@
 #include "geometry.h"
 #include "scene_capture.h"
 #include "sprite_geometry.h"
+#include "campaign_state.h"
+#include "sim_step.h"
 #include <SDL2/SDL_keycode.h>
 #include <string.h>
 
@@ -42,6 +44,12 @@
 #endif
 
 static uint64_t rr_irq_epoch;
+static unsigned rr_hook_music_cue;
+int rr_adapter_atomic;
+void rr_adapter_state(uint64_t *epoch,unsigned *cue,int apply){
+    if(apply){rr_irq_epoch=*epoch;rr_hook_music_cue=*cue;rr_adapter_atomic=0;}
+    else {*epoch=rr_irq_epoch;*cue=rr_hook_music_cue;}
+}
 static RRRa *rr_achievements;
 static int rr_ra_initialized;
 static uint32_t rr_toast[320 * 148];
@@ -104,10 +112,12 @@ static int rr_split_screen(void) {
 #endif
 }
 int rr_game_key(int key) {
+    if(key==SDLK_F1) {rr_campaign_load();return 1;}
     if(key==SDLK_F6) {rr_local_toggle();return 1;}
     return 0;
 }
 static void rr_frame_pre(uint64_t frame) {
+    rr_geometry_enable_coverage(1);
     rr_tick=frame;
 #if RR_GAME_rr1
     rr_geometry_source(0,g_rom,RR_SIZE,g_ram);
@@ -116,8 +126,8 @@ static void rr_frame_pre(uint64_t frame) {
 #else
     rr_geometry_source(2,g_rom,RR_SIZE,g_ram);
 #endif
-    int road_scene=rr_racing()&&!rr_split_screen()&&!rr_local_panel();
-    rr_geometry_frame(frame,road_scene?(rr_paused()?2:1):0);
+    int road_scene=rr_racing()&&!rr_local_panel();
+    rr_geometry_frame(frame,road_scene?(rr_split_screen()?(rr_paused()?4:3):(rr_paused()?2:1)):0);
     /* Use guest effects mode while the host supplies the remake, restoring
      * the user's option at the end of the simulated frame. */
     rr_native_effects_override=rr_racing()&&rr_music_replacing();
@@ -145,10 +155,8 @@ static void rr_frame_pre(uint64_t frame) {
     rr_picture=rr_read32(0x389c);
 #elif RR_GAME_rr2
     rr_picture=rr_read32(0x2796);
-    if(rr_read16(0x0304))on=0;
 #else
     rr_picture=rr_read32(0x276e);
-    if(rr_read16(0x022c)==1)on=0;
 #endif
     int native_width=gvdp_screen_width(&g_machine.vdp);
     int margin=rr_wide_margin(native_width);
@@ -159,7 +167,7 @@ static void rr_frame_pre(uint64_t frame) {
         RR_SHORT,GENESIS_GAME_VERSION,on,getenv("RR_MUSIC_VOLUME")?getenv("RR_MUSIC_VOLUME"):"20",getenv("RR_EFFECTS_VOLUME")?getenv("RR_EFFECTS_VOLUME"):"100",getenv("RR_SHADER_PATH")?getenv("RR_SHADER_PATH"):"none");
 }
 static void rr_shutdown(void) { rr_ra_destroy(rr_achievements); rr_achievements = NULL; rr_music_shutdown(); }
-static const char *rr_no_states(void) { return "Road Rash snapshots are not qualified yet"; }
+static void rr_state_loaded(void) {rr_geometry_reset();rr_motion_scene(0,0);rr_native_effects_override=0;rr_local_state_loaded();rr_panel_visible=rr_toast_visible=0;}
 static void rr_entry(void) { recomp_call_addr(0x200u); }
 static void rr_vblank(void) { recomp_call_addr(RR_VINT); ++rr_irq_epoch; }
 static void rr_hblank(void) { recomp_call_addr(RR_HINT); ++rr_irq_epoch; }
@@ -188,6 +196,7 @@ static void rr_frame_post(uint64_t frame)
         rr_ra_initialized = 1;
         atexit(rr_shutdown);
         rr_music_init(RR_SHORT); audio_set_extra_source(rr_music_mix);
+        rr_campaign_init(RR_SHORT);
         rr_local_init(RR_SHORT,!input_script_active());
         if (!input_script_active()) {
             extern uint32_t rr_ra_read(uint32_t, uint8_t *, uint32_t, void *);
@@ -196,15 +205,18 @@ static void rr_frame_post(uint64_t frame)
     }
     rr_ra_update(rr_achievements, 1);
     int paused=rr_paused();
+    rr_campaign_observe(rr_racing(),!rr_split_screen(),genesis_sim_pad(0));
     rr_music_pause(paused);
     rr_motion_scene(rr_racing()&&!paused&&!rr_local_panel(),rr_picture);
     rr_local_frame(rr_racing(),rr_read16(rr_player()+18),0,paused);
     const char *notification = rr_ra_notification(rr_achievements);
     if(!notification||!*notification)notification=rr_local_toast();
+    const char *state_message=rr_campaign_message();
+    if(state_message&&*state_message)notification=state_message;
     rr_toast_visible = notification && *notification;
     if (rr_toast_visible) {
         gen_ovl_fill_rect(rr_toast, 320, 30, 0, 0, 320, 30, 0xFF171B1Eu);
-        gen_ovl_draw_text(rr_toast, 320, 30, 7, 4, "CONQUISTA DESBLOQUEADA", 0xFFFFCD35u, 1);
+        gen_ovl_draw_text(rr_toast, 320, 30, 7, 4, state_message&&*state_message?"SAVE STATE":"CONQUISTA DESBLOQUEADA", 0xFFFFCD35u, 1);
         gen_ovl_draw_text(rr_toast, 320, 30, 7, 16, notification, 0xFFF5F1E5u, 1);
     }
     rr_panel_visible=rr_local_panel();
@@ -230,8 +242,6 @@ static void rr_frame_post(uint64_t frame)
 }
 
 static int rr_hook(uint32_t pc) {
-    static unsigned music_cue;
-    static int stopping_native;
 #if RR_GAME_rr1
     if(pc==0xf44c){rr_geometry_actor_end(0,g_cpu.A[0],g_ram);return 0;}
     if(pc==0xf4ca){rr_geometry_actor_begin(0,g_cpu.A[0],g_cpu.A[1]);return 0;}
@@ -281,12 +291,12 @@ static int rr_hook(uint32_t pc) {
     if(pc==0x3a9de&&cue>=1&&cue<=11) {
         if(rr_music_start(cue)) {
             M68KState saved=g_cpu;
-            if(music_cue){stopping_native=1;g_cpu.D[1]=music_cue;recomp_call_addr(0x3aade);stopping_native=0;}
-            g_cpu=saved;music_cue=cue;g_cpu.D[0]=0;
+            if(rr_hook_music_cue){rr_adapter_atomic=1;g_cpu.D[1]=rr_hook_music_cue;recomp_call_addr(0x3aade);rr_adapter_atomic=0;}
+            g_cpu=saved;rr_hook_music_cue=cue;g_cpu.D[0]=0;
             return 1;
         }
-        music_cue=cue;
-    }else if(pc==0x3aade&&cue==music_cue&&!stopping_native) {
+        rr_hook_music_cue=cue;
+    }else if(pc==0x3aade&&cue==rr_hook_music_cue&&!rr_adapter_atomic) {
         if(rr_stop_for_pause())rr_music_pause(1);else rr_music_stop();
     }
 #endif
@@ -306,10 +316,16 @@ static int rr_video_enabled(void) { return 0; }
 static int rr_video_width(int dw, int dh, int nw, int nh) { (void)dw; (void)dh; (void)nw; (void)nh; return 0; }
 static void rr_overlay(const struct GVDP *vdp, int line, uint32_t *out, int width)
 {
-    (void)vdp;
-    if(width>320&&line>=152){
+    rr_geometry_resolve(vdp,line,out,width);
+    if(width>320){
         int margin=(width-320)/2;
-        for(int x=0;x<margin;++x)out[x]=out[width-1-x]=0xff101315;
+        int split=rr_split_screen();
+        int left=split?!(line>=8&&line<104):line>=152;
+        int right=split?!(line>=112&&line<208):line>=152;
+        for(int x=0;x<margin;++x){
+            if(left)out[x]=0xff101315;
+            if(right)out[width-1-x]=0xff101315;
+        }
     }
     if (rr_panel_visible && line>=38&&line<186) {
         int start=(width-320)/2;
@@ -334,7 +350,12 @@ const GameSpec g_game_spec = {
     /* Initial integrations retain measured fallback coverage. The launcher
        must not describe this as a fully static, coverage-complete release. */
     .tier3_floor_default = 1,
-    .state_unavailable_reason = rr_no_states,
+    .state_unavailable_reason = rr_campaign_unavailable,
+    .state_build_id = rr_campaign_build_id,
+    .state_size = rr_campaign_state_size,
+    .state_save = rr_campaign_state_save,
+    .state_load = rr_campaign_state_load,
+    .on_state_loaded = rr_state_loaded,
     .call_entry_point = rr_entry,
     .call_vblank = rr_vblank,
     .call_hblank = rr_hblank,
