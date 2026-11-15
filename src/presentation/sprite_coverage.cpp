@@ -32,7 +32,7 @@ CoverageImage::Sample CoverageImage::area(double x0,double y0,double x1,double y
     y0=std::clamp(y0,0.,(double)height);y1=std::clamp(y1,0.,(double)height);
     if(x1<=x0||y1<=y0||pixel_area<=0)return result;
     auto add=[&](unsigned color,double area){
-        uint32_t p=palette[(base+color)&255];double a=area/pixel_area;
+        uint32_t p=palette[(base+color)&2047];double a=area/pixel_area;
         result.r+=((p>>16)&255)*a;result.g+=((p>>8)&255)*a;result.b+=(p&255)*a;result.a+=a;
     };
     int xa=(int)std::floor(x0),xb=(int)std::ceil(x1),ya=(int)std::floor(y0),yb=(int)std::ceil(y1);
@@ -65,21 +65,22 @@ void resolve_sprite_row(int line,int left,int right,const uint8_t *background,co
     std::stable_sort(order.begin(),order.end(),[](auto a,auto b){return a->order<b->order;});
     for(auto it=order.rbegin();it!=order.rend();++it){const auto& s=**it;
         if(!s.image||s.scale<=0||line+1<=s.top||line>=std::min(s.clip,s.top+s.image->height*s.scale))continue;
-        int x0=std::max(left,(int)std::floor(s.left)),x1=std::min(right,(int)std::ceil(s.left+s.image->width*s.scale));
+        const double row=s.row_left(line);
+        int x0=std::max(left,(int)std::floor(row)),x1=std::min(right,(int)std::ceil(row+s.image->width*s.scale));
         double v0=(line-s.top)/s.scale,v1=(std::min(line+1.,s.clip)-s.top)/s.scale;
         if(s.flip_y){double t=s.image->height-v1;v1=s.image->height-v0;v0=t;}
         for(int x=x0;x<x1;++x){
             if(owner[x]&&owner[x]<=s.order)continue;
             if(plane_high[x]&&!s.priority&&!s.per_pixel_priority)continue;
-            double u0=(x-s.left)/s.scale,u1=(x+1.-s.left)/s.scale;
+            double u0=(x-row)/s.scale,u1=(x+1.-row)/s.scale;
             if(s.flip_x){double t=s.image->width-u1;u1=s.image->width-u0;u0=t;}
             auto c=s.image->area(u0,v0,u1,v1,1./(s.scale*s.scale),palette,s.base,plane_high[x]&&s.per_pixel_priority);
             if(c.a<=0)continue;
             if(s.crisp&&c.a>1.-1e-9){
-                int u=(int)std::floor((x+.5-s.left)/s.scale),v=(int)std::floor((line+.5-s.top)/s.scale);
+                int u=(int)std::floor((x+.5-row)/s.scale),v=(int)std::floor((line+.5-s.top)/s.scale);
                 if(s.flip_x)u=s.image->width-1-u;if(s.flip_y)v=s.image->height-1-v;
                 if(u>=0&&u<s.image->width&&v>=0&&v<s.image->height){size_t q=(size_t)v*s.image->width+u;
-                    if(s.image->opaque[q]){auto p=palette[(s.base+s.image->index[q])&255];c.r=(p>>16)&255;c.g=(p>>8)&255;c.b=p&255;}
+                    if(s.image->opaque[q]){auto p=palette[(s.base+s.image->index[q])&2047];c.r=(p>>16)&255;c.g=(p>>8)&255;c.b=p&255;}
                 }
             }
             rgb[x][0]=c.r+(1-c.a)*rgb[x][0];rgb[x][1]=c.g+(1-c.a)*rgb[x][1];rgb[x][2]=c.b+(1-c.a)*rgb[x][2];mask[x]=1;

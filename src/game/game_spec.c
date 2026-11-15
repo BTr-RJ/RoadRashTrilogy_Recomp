@@ -172,6 +172,52 @@ static void rr_entry(void) { recomp_call_addr(0x200u); }
 static void rr_vblank(void) { recomp_call_addr(RR_VINT); ++rr_irq_epoch; }
 static void rr_hblank(void) { recomp_call_addr(RR_HINT); ++rr_irq_epoch; }
 
+#if RR_GAME_rr1
+/* 0.70 experiment (phase 1), RR1 only, OFF by default: RR_NATIVE_RATE=1.5 runs the
+   main-program CPU 1.5x faster than the native clock. IRQ, DMA, raster, Z80 and
+   audio stamps keep native timing (engine main_cpu_divisor hook). The hook is
+   queried per scheduler slice with an INTEGER divisor, so a fractional rate is
+   dithered between floor and ceil with an error accumulator (deterministic). */
+static unsigned rr_main_cpu_divisor(void)
+{
+    static int ready=0;static unsigned whole=1,part=0,acc=0;
+    if(!ready){
+        ready=1;const char *text=getenv("RR_NATIVE_RATE");
+        double rate=text&&*text?atof(text):1.;
+        if(!(rate>=1.))rate=1.;
+        if(rate>3.)rate=3.;
+        unsigned milli=(unsigned)(rate*1000.+.5);whole=milli/1000;part=milli%1000;
+        if(milli>1000)fprintf(stderr,"[RR NATIVE RATE] main CPU x%.3f (experimental)\n",rate);
+    }
+    if(!part)return whole;
+    acc+=part;
+    if(acc>=1000){acc-=1000;return whole+1;}
+    return whole;
+}
+/* Frame trace for the experiment (RR_NATIVE_RATE_TRACE=file): dt, step state and the
+   first eight rider slots, read straight from RAM (no bus cycles). */
+static FILE *rr_rate_trace;
+static void rr_rate_trace_frame(uint64_t frame)
+{
+    static int opened=0;
+    if(!opened){
+        opened=1;const char *path=getenv("RR_NATIVE_RATE_TRACE");
+        if(path&&*path&&(rr_rate_trace=fopen(path,"wb"))){
+            fputs("frame,dt,vblank,cam_seg,cam_frac,cam_x,job_img,job_second,job_flags,job_y",rr_rate_trace);
+            for(int s=0;s<8;++s)fprintf(rr_rate_trace,",x%d,seg%d,frac%d,spd%d,yaw%d,st%d,fl%d",s,s,s,s,s,s,s);
+            fputc('\n',rr_rate_trace);
+        }
+    }
+    if(!rr_rate_trace)return;
+    fprintf(rr_rate_trace,"%llu,%u,%u,%u,%u,%u,%u,%u,%04X,%d",(unsigned long long)frame,rr_read16(0xff304a),rr_read16(0xff3048),
+        rr_read16(0xff1e68),rr_read16(0xff1e6a),rr_read16(0xff1e60),rr_read16(0xd384),rr_read16(0xd38e),rr_read16(0xd386),(int16_t)rr_read16(0xd37e));
+    for(unsigned s=0;s<8;++s){unsigned a=0xff1eaa+s*0x80;
+        fprintf(rr_rate_trace,",%d,%u,%u,%u,%d,%u,%02X",(int16_t)rr_read16(a),rr_read16(a+4),rr_read16(a+6),rr_read16(a+18),(int16_t)rr_read16(a+66),g_ram[(a+113)&65535],g_ram[(a+104)&65535]);}
+    fputc('\n',rr_rate_trace);
+    if(frame%30==0)fflush(rr_rate_trace);
+}
+#endif
+
 /* v0.1.2 declares/emits this ABI but has no definition. In these cartridge
    revisions STOP appears in exception handlers with SR=$2700 (all maskable
    interrupts disabled). Keep that halt visible and let the host stay alive.
@@ -230,6 +276,9 @@ static void rr_frame_post(uint64_t frame)
         }
         gen_ovl_draw_text(rr_toast,320,148,8,132,"F6: fechar",0xFFADB2AB,1);
     }
+#if RR_GAME_rr1
+    rr_rate_trace_frame(frame);
+#endif
     if (frame % 300u == 0 && getenv("RR_TRACE")) {
         fprintf(stderr, "[RR TRACE] frame=%llu PC=%06X SR=%04X A7=%08X VDP1=%02X Z80pc=%04X request=%d flag0B=%02X native=%llu\n",
                 (unsigned long long)frame, g_cpu.PC, g_cpu.SR, g_cpu.A[7],
@@ -362,4 +411,7 @@ const GameSpec g_game_spec = {
     .on_frame_post = rr_frame_post,
     .on_frame_pre = rr_frame_pre,
     .instruction_hook = rr_hook,
+#if RR_GAME_rr1
+    .main_cpu_divisor = rr_main_cpu_divisor,
+#endif
 };

@@ -14,6 +14,7 @@ extern "C" {
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <unordered_map>
 #include <map>
 #include <string>
 #include <vector>
@@ -147,8 +148,40 @@ struct Billboard {const rr::SpriteAsset *art;Pose pose;int flags,palette,priorit
 std::vector<Billboard> billboards;
 struct ActorCanvas {int x=0,y=0,width=0,height=0;std::vector<uint8_t> index,opaque,high;rr::CoverageImage coverage;};
 struct ActorArt {const rr::SpriteAsset *art;SourcePart source;unsigned attr,base;bool native;};
+// 0.70 Motorcycle Motion (RR1 rivals). Center line of a rider image in source
+// pixels: x(h)=offset+slope*h, h measured upward from the ground anchor row.
+struct PoseLine {double offset=0,slope=0,height=0;bool valid=false;};
+// Presentation-only residual between the previous and the current pose image.
+// It never selects artwork and never changes when a native image is committed.
+struct PoseEase {unsigned image=0,flags=0;bool known=false,active=false;PoseLine line;
+    uint64_t committed=0,start=0;double offset=0,slope=0,duration=1;};
+// Prototype 02 (RR_MOTORCYCLE_MOTION=2): reconstructed in-between frames.
+// A pose silhouette is its left/right hull per normalised height, in source
+// pixels relative to the ground anchor. In-betweens interpolate the hull and
+// re-sample ONE source image with nearest texels: no blending, no ghost.
+inline static constexpr int POSE_ROWS=64;
+struct PoseShape {std::array<float,POSE_ROWS> left{},right{};double height=0;bool valid=false;};
+struct PoseTexture {const rr::SpriteAsset *art=nullptr;bool flip=false;unsigned image=0,flags=0,attr=0,base=0;PoseShape shape;};
+struct PoseMorph {PoseTexture from,to;PoseShape start;uint64_t committed=0,begin=0,built=UINT64_MAX;double duration=1;
+    bool known=false,active=false;rr::SpriteAsset frame;ActorArt part{};
+    // Prototype 03 (RR_MOTORCYCLE_MOTION=3): `shown` is the hull on screen. It
+    // chases `goal` (the newest native hull) with a critically damped follower,
+    // so velocity stays continuous across 12 Hz native swaps. `from` is the
+    // texture on screen before the newest swap, `to` the newest native one.
+    PoseShape shown,goal;PoseTexture shown_tex;std::array<float,POSE_ROWS> lv{},rv{};
+    double hv=0,omega=.6;uint64_t stepped=UINT64_MAX;};
+// Prototype 04 (RR_MOTORCYCLE_MOTION=6): temporal pixel dissolve. The two ROM
+// images (old and newly committed) are kept in screen orientation, relative to
+// the same ground anchor. For at most 3 frames each pixel switches ONCE from
+// the old to the new image, in the order of a 4x4 Bayer matrix indexed by the
+// sprite-local coordinates. No new colour, no resampling, no deformation.
+struct DissolveImage {int width=0,height=0,anchor_x=0,anchor_y=0;std::vector<uint8_t> pixels;};
+struct Dissolve {DissolveImage from,to,shown;unsigned id=0,second=0,flags=0,attr=0,base=0,from_id=0,frames=3;
+    bool known=false,active=false;uint64_t committed=0,begin=0,built=UINT64_MAX;
+    rr::SpriteAsset frame;ActorArt part{};};
 struct ActorCache {ActorCanvas canvas;Pose root;uint64_t root_key=0,epoch=0,seen=0;unsigned first=0;
     uint32_t actor=0;
+    PoseEase ease;PoseMorph morph;Dissolve dissolve;
     rr::ContinuousValue depth_filter;
     rr::QuantizedAnchor body_filter,height_filter;
     bool full_source=false,has_motion=false,world_height_valid=false,lane_anchor=false,raw_height=false,departing=false;
@@ -156,8 +189,83 @@ struct ActorCache {ActorCanvas canvas;Pose root;uint64_t root_key=0,epoch=0,seen
     double departure_speed=2;uint64_t departure_frame=UINT64_MAX;
     double lane_target=0,lane_position=0,lane_velocity=0;uint64_t lane_frame=UINT64_MAX;
     History motion;SourcePacket appearance;std::map<uint64_t,unsigned> palettes;std::vector<ActorArt> parts;};
-struct ActorDrawing {const ActorCache *cache;Pose root;double ratio;unsigned order;bool held;double clip=152;uint32_t actor=0;};
+struct ActorDrawing {const ActorCache *cache;Pose root;double ratio;unsigned order;bool held;double clip=152;uint32_t actor=0;
+    // Destination-row displacement in screen pixels; both zero in classic mode.
+    double row_offset=0,row_slope=0;
+    double row_shift(int line) const {return row_offset==0&&row_slope==0?0.:row_offset+row_slope*(root.y-(line+.5));}
+    // Prototype 02: one reconstructed in-between image replacing the parts.
+    const ActorArt *morph=nullptr;};
+bool pose_morphing=false;double pose_morph_frames=10;
+// Prototype 03: critically damped hull follower for rivals and the player.
+bool pose_following=false,pose_player=false,pose_player_force=false;
+double pose_follow_rival=.45,pose_follow_player=.7;   // 1/frame; rivals favour smoothness, the player (input-coupled) favours response
+uint64_t player_serial=0;FILE *player_trace=nullptr,*player_jobs_trace=nullptr,*hull_trace=nullptr;
+bool pose_dissolving=false;uint64_t dissolve_swaps=0,dissolve_frames=0;FILE *dissolve_trace=nullptr;   // prototype 04
+// 0.70 D033 Rival Identity (RR1 first). Per-sprite palette composition only: the
+// rider pixels keep their nibble, transparency, priority, order and geometry; the
+// colour comes from the engine's host palette (never from the guest CRAM).
+bool rival_identity=false;
+std::vector<std::pair<uint32_t,int>> identity_slots;   // actor address -> host palette block (16 colours)
+uint64_t identity_slots_tick=UINT64_MAX;
+struct RivalLook {const char *name;uint32_t helmet,vest,suit;};   // 0xRRGGBB: main shade of helmet / vest / rider suit
+// D034: owner-chosen kits (29 riders). Police (O'Leary, O'Rourke, O'Shea, O'Connor, Flynn) are NOT listed: they keep the original look.
+inline static constexpr RivalLook rr1_looks[]={
+    {"Lester",0xf08214,0x283c8c,0xd7d7dc},{"Rude Boy",0xf0289c,0x282828,0x8cc81e},
+    {"Grubb",0x965a28,0xc8aa6e,0x5a6428},{"Gunther",0x28282d,0xdcb428,0x8c1e1e},
+    {"Sid",0xe6b428,0x6e28a0,0x3c1e5a},{"Axle",0xdc2828,0x323237,0x8c9196},
+    {"Hammer",0x28282d,0xf0d21e,0x5a5a64},{"Dread",0x28282d,0xaa1e28,0x3c3c44},
+    {"Viper",0x28282d,0x8cf03c,0x3c5a28},{"Shiva",0x1ec8c8,0xdcaa28,0x28285a},
+    {"Natasha",0xaae6f0,0xc8288c,0x28285a},{"Slater",0x6e82a0,0x1e2d5a,0xdcdce1},
+    {"Biff",0xe65a1e,0x784628,0xf0f0f0},{"Rex",0xf0f0f0,0x784628,0xb4781e},
+    {"Hoghide",0x786428,0x282828,0x5a3c1e},{"Ikira",0xaaaab4,0xaa1e50,0x1e1e28},
+    {"Butch",0x5a6e32,0xc8be8c,0x3c4628},{"Angel",0x78bef0,0xf0c8dc,0xf0f0f0},
+    {"BroomHelga",0x3cb43c,0x28282d,0x6e286e},{"Chip",0x1ec8e6,0xf08c1e,0x28325a},
+    {"Sergio",0x8c1e3c,0xd2aa3c,0x28282d},{"Spike",0x6edc28,0x28282d,0x28465a},
+    {"Zippy",0xdcf03c,0x286edc,0x28282d},{"Otis",0x8c5a28,0xebe6cd,0x46321e},
+    {"Helldog",0x28282d,0xf08214,0x8c1e14},{"Bob",0x5a96e6,0x8c8c91,0xf0f0f0},
+    {"Luna",0xbeaaf0,0x462878,0xe1e1f0},{"Killjoy",0x82f03c,0x64288c,0x28282d},
+    {"Ollie",0x28aa8c,0xf0e196,0x1e5a50}};
+// D040: owner-approved RR2 kits (helmet, vest, suit). Riders that share a name with an approved RR1 rider (Natasha, Slater, Rude Boy, Axle,
+// Viper, Ikira, Biff) are NOT repeated here: rival_look() falls back to rr1_looks, so they keep the identical RR1 kit. Police (O'Connor,
+// Marshall, Rourke, Ortega, Kelly) are deliberately absent (D041: Bunker now has the approved kit B).
+inline static constexpr RivalLook rr2_looks[]={
+    {"Lawson",0xdcb428,0x1e3c8c,0x28282d},{"P.E. No.1",0x28282d,0xf08214,0x464650},
+    {"Buffy",0xf0f0f0,0xf068b4,0x781e5a},{"Roz",0x1ec8c8,0xf08c1e,0x28325a},
+    {"Kakana",0xdc5a82,0xf0f0f0,0x1e5a8c},{"Ralph",0x5a96e6,0xebe6cd,0x3c5a28},
+    {"Slug",0x82f03c,0x3c5a28,0x28282d},{"Lesley",0xf0f0f0,0x1ec8c8,0x28285a},
+    {"Jorg",0xe6b428,0x1e3c8c,0x28282d},{"Sven",0xf0f0f0,0x1e50b4,0x8c1e14},
+    {"Chino",0xf0d21e,0xdc2828,0x28282d},{"Warhammer",0x28282d,0xe6b428,0x5a5a64},
+    {"Bunker",0x464650,0x5a6e32,0x28282d}};   // D041: kit B approved (ROM: circuit-1 racer, b13=02, never a police record)
+int rr2_group_value=-1;uint64_t rr2_group_tick=UINT64_MAX;
+// D044 RR3: exclusive riders (shared names fall back to the approved RR1/RR2 kits).
+inline static constexpr RivalLook rr3_looks[]={
+    {"Odie",0xf08214,0x1ec8c8,0x28285a},{"Lucky Luc",0xe6b428,0x28282d,0x8c1e14},{"Belladonna",0xf0f0f0,0x8c1e3c,0x462878},
+    {"Scab Boy",0x5a6428,0xc8be8c,0x3c3c44},{"Slim",0xf0f0f0,0x1e50b4,0x28282d},{"Pearl",0xf0f0f0,0xbeaaf0,0x6e82a0},
+    {"Rhonda",0xdc2828,0x28282d,0xf0f0f0},{"Nina",0xf068b4,0x28282d,0x6e286e},{"Bolo",0xe65a1e,0xebe6cd,0x28282d},
+    {"Walleye",0xdcb428,0x28465a,0x28282d},{"Madame X",0xaaaab4,0x28282d,0xaa1e28},{"Helmut",0xdc2828,0xf0f0f0,0x28282d}};
+int rr3_group_value=-1;uint64_t rr3_group_tick=UINT64_MAX;
+// roles: 1 helmet, 2 vest, 3 suit, 0 other. `coded` is the same image for the coverage resolver with the role
+// folded into the colour code: 0..15 line-2 nibble, 16+n helmet, 32+n vest, 48+n suit, 64+i any other CRAM index i.
+struct RoleMap {int w=0,h=0;uint32_t hash=0;uint64_t tick=UINT64_MAX;std::vector<uint8_t> roles;rr::CoverageImage coded;};
+std::map<const void*,RoleMap> role_maps;
+struct IdentityEntry {uint32_t target;uint8_t role,nib;};
+std::vector<IdentityEntry> identity_entries;
+// Native (SAT) pixels of a rival: its live sprites composed into one bitmap, so helmet/vest can be told apart.
+struct NativeRoles {struct Piece {unsigned slot;int cx,cy,w,h;};   // piece origin inside the composed bitmap
+    int left=0,top=0,w=0,h=0;std::vector<uint8_t> roles;std::vector<Piece> pieces;};
+std::map<uint64_t,NativeRoles> native_roles;   // key: (job group<<32)|actor
+std::array<uint32_t,80> slot_actor{},slot_group{};unsigned native_sat=0;
+// D036: sprite ownership kept independent of the geometry scene (start fade, pause, mirrors).
+std::array<bool,80> id_live{};std::array<uint64_t,80> id_sig{};std::array<uint32_t,80> id_prev_owner{},id_prev_group{};uint64_t id_owner_tick=UINT64_MAX;std::unordered_map<uint64_t,std::pair<uint32_t,uint32_t>> id_memory;std::deque<Job> id_archive;
+std::map<uint32_t,int> identity_blocks;std::vector<RivalLook> identity_block_looks;   // coverage palette block per rival
+static constexpr size_t MAX_IDENTITY_BLOCKS=13,COVERAGE_BLOCK_BASE=256,COVERAGE_BLOCK_SIZE=128;
+std::map<uint32_t,std::array<uint8_t,48>> identity_map;   // actor -> [(role-1)*16+nib] = host entry+1
+bool pose_easing=false,pose_easing_logged=false;
+uint64_t pose_eases=0,pose_ease_rejections=0,pose_ease_frames=0;
+FILE *pose_trace=nullptr;
 std::map<uint32_t,ActorCache> actor_caches;
+ActorCache player_cache;   // prototype 03: the player's one rider assembly (never in actor_caches)
+std::array<rr::SpriteAsset,6> player_images;unsigned player_image_next=0;   // native-bitmap poses: from/to/shown_tex only ever reference the newest three
 std::vector<ActorDrawing> actor_drawings;
 uint64_t actor_canvas_frames=0,actor_hold_frames=0;
 uint64_t actor_source_captures=0,actor_source_assemblies=0,actor_source_only=0,actor_restored_pixels=0;
@@ -198,6 +306,14 @@ void finish(){
     if(scenery_trace){std::fclose(scenery_trace);scenery_trace=nullptr;}
     if(traffic_trace){std::fclose(traffic_trace);traffic_trace=nullptr;}
     if(lane_trace){std::fclose(lane_trace);lane_trace=nullptr;}
+    if(pose_trace){std::fclose(pose_trace);pose_trace=nullptr;}
+    if(player_trace){std::fclose(player_trace);player_trace=nullptr;}
+    if(player_jobs_trace){std::fclose(player_jobs_trace);player_jobs_trace=nullptr;}
+    if(hull_trace){std::fclose(hull_trace);hull_trace=nullptr;}
+    if(commit_trace){std::fclose(commit_trace);commit_trace=nullptr;}
+    if(dissolve_trace){std::fclose(dissolve_trace);dissolve_trace=nullptr;}
+    if(pose_easing_logged)std::fprintf(stderr,"[RR MOTORCYCLE MOTION] eases=%llu rejected=%llu eased_drawings=%llu\n",
+        (unsigned long long)pose_eases,(unsigned long long)pose_ease_rejections,(unsigned long long)pose_ease_frames);
     if(audit_trace){
         std::fclose(audit_trace);audit_trace=nullptr;
         std::string path=std::string(trace_path("RR_GEOMETRY_AUDIT"))+".json";
@@ -683,6 +799,490 @@ void stamp_actor(SourcePacket& packet,int game,uint32_t actor,const uint8_t *ram
     packet.height=(int16_t)word(ram,(actor&65535)+50);
     packet.has_road=read_road(game,ram,packet.road);
 }
+PoseLine pose_line(const rr::SpriteAsset& art,bool flip){
+    // Least-squares line through the centroid of every opaque source row.
+    double n=0,sh=0,sc=0,shh=0,shc=0;
+    for(int y=0;y<art.height;++y){double count=0,sum=0;
+        for(int x=0;x<art.width;++x)if(art.pixels[(size_t)y*art.width+x]){++count;sum+=x+.5;}
+        if(!count)continue;
+        double h=art.anchor_y-(y+.5),c=sum/count-art.anchor_x;
+        ++n;sh+=h;sc+=c;shh+=h*h;shc+=h*c;
+    }
+    double denominator=n*shh-sh*sh;
+    if(n<8||denominator<=0)return {};
+    double slope=(n*shc-sh*sc)/denominator,offset=(sc-slope*sh)/n;
+    return {flip?-offset:offset,flip?-slope:slope,(double)std::max(art.anchor_y,1),true};
+}
+// Remaining share of a pose residual. It reaches exactly zero `duration-1`
+// frames after the native commit; the artwork itself is never delayed.
+double pose_ease_factor(const PoseEase& e,uint64_t at) const {
+    if(!e.active||at<e.start)return 0;
+    return std::max(0.,1.-((double)(at-e.start)+1.)/e.duration);
+}
+// Called exactly where a newly committed native assembly replaces the cached
+// artwork. Classic mode (and every unqualified case) leaves no residual.
+PoseShape pose_shape(const rr::SpriteAsset& art,bool flip){
+    PoseShape s;int top=-1;
+    for(int y=0;y<art.height&&top<0;++y)for(int x=0;x<art.width;++x)if(art.pixels[(size_t)y*art.width+x]){top=y;break;}
+    if(top<0||art.anchor_y-top<8)return s;
+    s.height=art.anchor_y-top;int rows=0;
+    for(int k=0;k<POSE_ROWS;++k){
+        int y=(int)std::floor(art.anchor_y-(k+.5)/POSE_ROWS*s.height),l=-1,r=-1;
+        if(y>=0&&y<art.height)for(int x=0;x<art.width;++x)if(art.pixels[(size_t)y*art.width+x]){if(l<0)l=x;r=x+1;}
+        if(l<0){s.left[k]=1;s.right[k]=0;continue;}
+        float a=(float)(l-art.anchor_x),b=(float)(r-art.anchor_x);
+        s.left[k]=flip?-b:a;s.right[k]=flip?-a:b;++rows;
+    }
+    s.valid=rows>=POSE_ROWS/2;return s;
+}
+static double pose_curve(double u){return u*u*(3.-2.*u);}
+static PoseShape pose_between(const PoseShape& a,const PoseShape& b,double s){
+    PoseShape out;out.valid=true;out.height=a.height+(b.height-a.height)*s;
+    for(int k=0;k<POSE_ROWS;++k){bool ea=a.right[k]<=a.left[k],eb=b.right[k]<=b.left[k];
+        if(ea&&eb){out.left[k]=1;out.right[k]=0;}
+        else if(ea){out.left[k]=b.left[k];out.right[k]=b.right[k];}
+        else if(eb){out.left[k]=a.left[k];out.right[k]=a.right[k];}
+        else{out.left[k]=(float)(a.left[k]+(b.left[k]-a.left[k])*s);out.right[k]=(float)(a.right[k]+(b.right[k]-a.right[k])*s);}
+    }
+    return out;
+}
+// Largest hull-edge distance between two silhouettes, in source pixels.
+static double pose_distance(const PoseShape& a,const PoseShape& b){
+    double reach=0;
+    for(int k=0;k<POSE_ROWS;++k)if(a.right[k]>a.left[k]&&b.right[k]>b.left[k])
+        reach=std::max(reach,(double)std::max(std::abs(a.left[k]-b.left[k]),std::abs(a.right[k]-b.right[k])));
+    return reach;
+}
+double pose_progress(const PoseMorph& m,uint64_t at) const {return at<m.begin?0.:((double)(at-m.begin)+1.)/m.duration;}
+// ---- Prototype 03 ----------------------------------------------------------
+// Prototype 02 restarts a smoothstep at every native swap, so the on-screen
+// velocity drops to zero every ~5 frames (a 12 Hz judder at normal speed).
+// Here the shown hull is a critically damped follower of the newest native
+// hull: position AND velocity stay continuous, nothing is ever blended, and
+// each frame is still ONE source image resampled with nearest texels.
+static PoseShape pose_fill(const PoseShape& in){
+    PoseShape out=in;int first=-1;
+    for(int k=0;k<POSE_ROWS&&first<0;++k)if(in.right[k]>in.left[k])first=k;
+    if(first<0)return out;
+    for(int k=0;k<first;++k){out.left[k]=in.left[first];out.right[k]=in.right[first];}
+    for(int k=first+1;k<POSE_ROWS;++k)if(!(in.right[k]>in.left[k])){out.left[k]=out.left[k-1];out.right[k]=out.right[k-1];}
+    return out;
+}
+static double pose_gap(const PoseShape& a,const PoseShape& b){return std::max(pose_distance(a,b),std::abs(a.height-b.height));}
+// Width change per row (a minus b) on rows drawn in both: peak, median and the largest jump between
+// neighbouring rows ("kink"). A lean changes widths smoothly; a limb sticking out does not.
+static void pose_width_profile(const PoseShape& a,const PoseShape& b,double& peak,double& median,double& kink){
+    std::vector<double> d;double previous=0;bool have=false;peak=kink=0;
+    for(int k=0;k<POSE_ROWS;++k){
+        if(!(a.right[k]>a.left[k]&&b.right[k]>b.left[k])){have=false;continue;}
+        double w=(a.right[k]-a.left[k])-(b.right[k]-b.left[k]);d.push_back(std::abs(w));peak=std::max(peak,std::abs(w));
+        if(have)kink=std::max(kink,std::abs(w-previous));
+        previous=w;have=true;
+    }
+    if(d.empty()){median=0;return;}
+    std::sort(d.begin(),d.end());median=d[d.size()/2];
+}
+// A limb moving (punch, kick, arm back) changes the width of a FEW rows by a lot; a lean or a
+// posture step changes many rows a little. Row-wise reconstruction would stretch the torso along
+// with a limb, so those swaps stay native. Measured on the replay: every punch transition has
+// peak >= 16 px with a median <= 2 px; lean steps spread the change over many rows.
+// The player is large on screen (strict); rivals are small and far (tolerant).
+double pose_limb_peak=13.,pose_limb_peak_rival=16.;FILE *commit_trace=nullptr;
+void commit_follow(PoseMorph& m,const PoseTexture& next,bool known,bool continuous,double omega,int kind=1){
+    m.omega=omega;
+    auto rest=[&](const PoseTexture& t){
+        m.to=m.from=m.shown_tex=t;m.shown=pose_fill(t.shape);m.goal=m.shown;m.lv.fill(0);m.rv.fill(0);m.hv=0;};
+    if(!known||!continuous){m.active=false;if(known)rest(next);}
+    else if(next.image!=m.to.image||next.flags!=m.to.flags){
+        const PoseShape shown=m.active?m.shown:pose_fill(m.to.shape);
+        const PoseTexture displayed=m.active?m.shown_tex:m.to;
+        double reach=pose_gap(shown,next.shape),peak,median,kink;
+        pose_width_profile(m.to.shape,next.shape,peak,median,kink);
+        // Not a lean/posture step: a limb moving, or a tumble (many rows change a lot, or the
+        // silhouette gets much shorter/taller). Measured on the replay: lean steps have a peak
+        // width change <= 13 px and a height change <= 6 px; punches/kicks are local; crashes
+        // reach peak >= 20 px or height changes of 10-16 px.
+        bool limb=(peak>=(kind==0?pose_limb_peak:pose_limb_peak_rival)&&peak>=4*(median+1))||peak>=20.||
+            std::abs(m.to.shape.height-next.shape.height)>8.||(kind==0&&reach>14.);
+        if(commit_trace)std::fprintf(commit_trace,"%llu,%d,%u,%u,%.3f,%.3f,%.3f,%.3f,%d,%.3f,%.3f,%.3f\n",
+            (unsigned long long)tick,kind,m.to.image,next.image,reach,peak,median,kink,limb?1:0,
+            std::abs(m.to.shape.height-next.shape.height),m.to.shape.height,next.shape.height);
+        // Beyond this it is another kind of image (crash, attack reach), not
+        // a lean or posture step: keep the native swap.
+        if(reach>.05&&reach<=20.&&!limb){
+            if(!m.active){m.shown=shown;m.lv.fill(0);m.rv.fill(0);m.hv=0;}
+            m.from=displayed;m.to=next;m.goal=pose_fill(next.shape);
+            m.active=true;m.stepped=tick-1;m.begin=tick;m.built=UINT64_MAX;++pose_eases;
+        }else{m.active=false;if(reach>20.||limb)++pose_ease_rejections;rest(next);}
+    }
+    m.known=known;m.committed=tick;
+}
+// Exact solution of x''=-2w x'-w^2 (x-goal) over one frame: stable for any w.
+void follow_advance(PoseMorph& m){
+    uint64_t steps=m.stepped==UINT64_MAX?1:(tick>m.stepped?tick-m.stepped:0);steps=std::min<uint64_t>(steps,6);
+    const double w=m.omega,e=std::exp(-w);
+    auto go=[&](float& x,float target,float& v){double d=x-target,c=v+w*d;x=(float)(target+(d+c)*e);v=(float)((v-w*c)*e);};
+    for(uint64_t n=0;n<steps;++n){
+        for(int k=0;k<POSE_ROWS;++k){go(m.shown.left[k],m.goal.left[k],m.lv[k]);go(m.shown.right[k],m.goal.right[k],m.rv[k]);}
+        float h=(float)m.shown.height,hv=(float)m.hv;go(h,(float)m.goal.height,hv);m.shown.height=h;m.hv=hv;
+    }
+    m.stepped=tick;
+}
+// Same raster rule as prototype 02: every displayed row keeps its own texels
+// and is displaced by the hull difference; no blending, no second image.
+bool render_follow(PoseMorph& m,const PoseTexture& t,const PoseShape& shown,const Pose& root){
+    const auto& art=*t.art;double height=shown.height,source_height=t.shape.height;
+    int rows=(int)std::ceil(height-1e-9);
+    if(rows<4||rows>art.height+8)return false;
+    // Rows at/below the ground anchor (a wheel's last pixel row) are not part
+    // of the hull: they ride along with the lowest hull row, unscaled.
+    int below=std::max(0,art.height-std::max(art.anchor_y,0));
+    struct Span {int y;double l,r,sl,sr;};
+    std::vector<Span> spans((size_t)(rows+below));double lo=1e9,hi=-1e9;
+    for(int j=0;j<rows+below;++j){auto& row=spans[j];row.y=-1;
+        double hn=j<rows?(rows-j-.5)/height:0.;if(hn>=1)continue;
+        int y=j<rows?(int)std::floor(art.anchor_y-hn*source_height):art.anchor_y+(j-rows),l=-1,r=-1;
+        if(y<0||y>=art.height)continue;
+        for(int x=0;x<art.width;++x)if(art.pixels[(size_t)y*art.width+x]){if(l<0)l=x;r=x+1;}
+        if(l<0)continue;
+        double sl=l-art.anchor_x,sr=r-art.anchor_x;if(t.flip){double q=-sr;sr=-sl;sl=q;}
+        int k=std::min(POSE_ROWS-1,(int)(hn*POSE_ROWS));
+        double tl=t.shape.left[k],tr=t.shape.right[k];if(tr<=tl){tl=sl;tr=sr;}
+        row.sl=sl;row.sr=sr;row.l=sl+(shown.left[k]-tl);row.r=sr+(shown.right[k]-tr);
+        if(row.r-row.l<1)continue;
+        row.y=y;lo=std::min(lo,row.l);hi=std::max(hi,row.r);
+    }
+    if(hi<=lo)return false;
+    int left=(int)std::floor(lo),width=(int)std::ceil(hi)-left;
+    auto& f=m.frame;f.width=width;f.height=rows+below;f.anchor_x=-left;f.anchor_y=rows;f.palette=art.palette;
+    f.pixels.assign((size_t)width*(rows+below),0);
+    for(int j=0;j<rows+below;++j){const auto& row=spans[j];if(row.y<0)continue;
+        for(int i=0;i<width;++i){double xa=left+i+.5;if(xa<row.l||xa>=row.r)continue;
+            double us=row.sl+(xa-row.l)*(row.sr-row.sl)/(row.r-row.l);
+            int x=(int)std::floor(t.flip?art.anchor_x-us:art.anchor_x+us);if(x<0||x>=art.width)continue;
+            f.pixels[(size_t)j*width+i]=art.pixels[(size_t)row.y*art.width+x];
+        }
+    }
+    f.coverage.build(width,rows+below,f.pixels.data());
+    m.part=ActorArt{&f,SourcePart{root.x,root.y,root.scale,152,t.image,0,t.flags,0},t.attr&~0x1800u,t.base,false};
+    return true;
+}
+// One reconstructed in-between image for this frame. False = show the native pose.
+bool build_follow(PoseMorph& m,const Pose& root,bool force=false){
+    if(!m.active&&!force)return false;
+    if(m.built==tick)return true;
+    if(m.active){
+        follow_advance(m);
+        double gap=pose_gap(m.shown,m.to.shape);
+        // Converged to within the pixel grid: hand over to the native image.
+        if(gap<.3&&std::abs(m.hv)<.2){m.active=false;m.shown_tex=m.to;m.shown=pose_fill(m.to.shape);if(!force)return false;}
+    }
+    const PoseTexture *t=&m.to;
+    if(m.active){
+        // Show the texture whose own silhouette is nearer to the hull on screen.
+        t=pose_gap(m.shown,m.to.shape)<=pose_gap(m.shown,m.from.shape)?&m.to:&m.from;m.shown_tex=*t;
+    }
+    if(!render_follow(m,*t,m.active?m.shown:pose_fill(m.to.shape),root)){m.active=false;return false;}
+    m.built=tick;return true;
+}
+// Rectangle (screen pixels) holding every image this follower can show now.
+void follow_box(const PoseMorph& m,const Pose& root,double box[4]){
+    box[0]=box[1]=1e9;box[2]=box[3]=-1e9;
+    auto add=[&](const rr::SpriteAsset& a,bool flip){
+        int ax=flip?a.width-a.anchor_x:a.anchor_x;double l=root.x-ax*root.scale,t=root.y-a.anchor_y*root.scale;
+        box[0]=std::min(box[0],l);box[1]=std::min(box[1],t);
+        box[2]=std::max(box[2],l+a.width*root.scale);box[3]=std::max(box[3],t+a.height*root.scale);};
+    if(m.to.art)add(*m.to.art,m.to.flip);if(m.from.art)add(*m.from.art,m.from.flip);
+    const auto& f=m.frame;if(f.width>0)add(f,false);
+}
+// Diagnostic only (RR_POSE_HULL_TRACE): silhouette edges at three heights of the NATIVE pose
+// (what classic shows) and of the pose actually shown, for the smoothness measurement.
+void trace_hull(uint32_t actor,double scale,const PoseShape& native,const PoseShape& shown){
+    if(!hull_trace)return;
+    std::fprintf(hull_trace,"%llu,%06X,%.4f,%.3f,%.3f",(unsigned long long)tick,actor,scale,native.height,shown.height);
+    for(const PoseShape *s:{&native,&shown})for(int k:{10,32,54})
+        std::fprintf(hull_trace,",%.3f,%.3f",s->right[k]>s->left[k]?s->left[k]:0.f,s->right[k]>s->left[k]?s->right[k]:0.f);
+    std::fputc('\n',hull_trace);
+}
+// The player's rider+bike: the SAME follower on the one native assembly. The
+// native pieces stay authoritative for position (job x/y), so the bike never
+// leaves the ground or the road raster; only the lean/posture silhouette is
+// reconstructed. Returns true while a reconstructed frame replaces them.
+bool track_player(const GVDP *v,const Job& job,double x){
+    auto& cache=player_cache;auto& m=cache.morph;
+    cache.root=Pose{x,job.y,1.};
+    if(job.serial!=player_serial){
+        player_serial=job.serial;
+        PoseTexture next;bool known=false;
+        // The pose is the committed NATIVE bitmap: every piece of the assembly (bike,
+        // rider and the `second` overlay image of a lean) with its own palette line.
+        // Per-pixel palette index/priority are copied, never recomputed.
+        ActorCanvas canvas;const std::vector<const Job*> one{&job};
+        if(!(job.flags&0x4000)&&compose_actor(v,one,cache.root,canvas)&&canvas.width>0&&canvas.height>0){
+            unsigned high=2;bool uniform=true;
+            for(size_t n=0;n<canvas.opaque.size();++n)if(canvas.opaque[n]){
+                if(high==2)high=canvas.high[n];else uniform&=canvas.high[n]==high;}
+            if(uniform&&high<2){
+                auto& a=player_images[player_image_next++%player_images.size()];
+                a.width=canvas.width;a.height=canvas.height;a.palette=0;
+                a.anchor_x=(int)std::lround(x-canvas.x);a.anchor_y=(int)std::lround(job.y-canvas.y);
+                a.pixels.assign((size_t)canvas.width*canvas.height,0);
+                for(size_t n=0;n<canvas.opaque.size();++n)if(canvas.opaque[n])a.pixels[n]=canvas.index[n];
+                next.art=&a;next.image=job.image<<16|job.second;next.flags=job.flags&0xc080;
+                next.attr=high?0x8000u:0u;next.base=0;next.flip=false;
+                next.shape=pose_shape(a,false);known=next.shape.valid;
+            }
+        }
+        bool continuous=known&&m.known&&tick>m.committed&&tick-m.committed<=12;
+        commit_follow(m,next,known,continuous,pose_follow_player,0);
+    }
+    bool shown=build_follow(m,cache.root,pose_player_force&&m.known);
+    if(hull_trace&&m.known)trace_hull((uint32_t)view.player,1.,m.to.shape,m.active?m.shown:m.to.shape);
+    if(player_trace&&(shown||m.active)){double box[4];follow_box(m,cache.root,box);
+        std::fprintf(player_trace,"%llu,%06X,%llu,%u,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f\n",
+            (unsigned long long)tick,(unsigned)view.player,(unsigned long long)job.serial,m.to.image,m.omega,
+            pose_gap(m.shown,m.to.shape),pose_gap(m.shown,m.to.shape),0.,1.,std::abs(m.shown.height-m.to.shape.height),
+            box[0],box[1],box[2],box[3]);}
+    return shown;
+}
+// Prototype 02 commit: the native swap tick starts a silhouette morph from
+// what was displayed on the previous frame to the newly committed image.
+void commit_morph(ActorCache& cache,const SourcePacket *packet){
+    auto& m=cache.morph;PoseTexture next;bool known=false;
+    // Only a pose that classic ALREADY draws from its one qualified source
+    // image. In-betweens then use exactly the same texels, palette and raster
+    // as the frames around them. A committed native bitmap (4:3, unsupported
+    // recolour) keeps the native swap: mixing the two rasters would pop.
+    if(packet&&packet->parts.size()==1&&!packet->parts[0].second&&!(packet->parts[0].flags&0x4000)&&cache.parts.size()==1){
+        const auto& p=packet->parts[0];const auto& drawn=cache.parts[0];
+        if(drawn.art&&drawn.source.image==p.image){
+            next.art=drawn.art;next.image=p.image;next.flags=p.flags&0xc080;next.attr=drawn.attr;next.base=drawn.base;
+            next.flip=(next.attr&0x0800)!=0;next.shape=pose_shape(*drawn.art,next.flip);known=next.shape.valid&&!(next.attr&0x1000);
+        }
+    }
+    bool continuous=known&&m.known&&tick>m.committed&&tick-m.committed<=12&&
+        cache.focal>0&&std::abs(cache.focal-2.5*view_focal)<1e-9;
+    if(pose_following){commit_follow(m,next,known,continuous,pose_follow_rival);return;}   // prototype 03: same qualification as 02
+    if(!continuous)m.active=false;
+    else if(next.image!=m.to.image||next.flags!=m.to.flags){
+        PoseShape shown=m.to.shape;PoseTexture texture=m.to;
+        double u=m.active?pose_progress(m,tick-1):1.;
+        if(u<1){shown=pose_between(m.start,m.to.shape,pose_curve(u));if(u<.5)texture=m.from;}
+        double reach=std::max(pose_distance(shown,next.shape),std::abs(shown.height-next.shape.height));
+        // Beyond this it is another kind of image (crash, attack reach), not
+        // a lean or posture step: keep the native swap.
+        if(reach>.05&&reach<=20.){
+            m.from=texture;m.start=shown;m.begin=tick;m.duration=pose_morph_frames;m.active=true;m.built=UINT64_MAX;++pose_eases;
+        }else{m.active=false;if(reach>20.)++pose_ease_rejections;}
+    }
+    if(known)m.to=next;
+    m.known=known;m.committed=tick;
+}
+// Rebuilds the in-between image for this frame. False = show the native pose.
+bool build_morph(ActorCache& cache){
+    auto& m=cache.morph;double u=pose_progress(m,tick);
+    if(tick<m.begin||u>=1){m.active=false;return false;}
+    if(m.built==tick)return true;
+    double s=pose_curve(u);
+    // Before the midpoint the previous image is deformed; after it, the new
+    // one. Both are then half-way, so their silhouettes agree at the switch.
+    const PoseTexture& t=u<.5?m.from:m.to;const auto& art=*t.art;
+    double height=m.start.height+(m.to.shape.height-m.start.height)*s,source_height=t.shape.height;
+    int rows=(int)std::ceil(height-1e-9);
+    struct Span {int y;double l,r,sl,sr;};
+    std::vector<Span> spans((size_t)std::max(rows,0));double lo=1e9,hi=-1e9;
+    for(int j=0;j<rows;++j){auto& row=spans[j];row.y=-1;
+        double hn=(rows-j-.5)/height;if(hn>=1)continue;
+        int y=(int)std::floor(art.anchor_y-hn*source_height),l=-1,r=-1;
+        if(y<0||y>=art.height)continue;
+        for(int x=0;x<art.width;++x)if(art.pixels[(size_t)y*art.width+x]){if(l<0)l=x;r=x+1;}
+        if(l<0)continue;
+        double sl=l-art.anchor_x,sr=r-art.anchor_x;if(t.flip){double q=-sr;sr=-sl;sl=q;}
+        int k=std::min(POSE_ROWS-1,(int)(hn*POSE_ROWS));
+        double tl=t.shape.left[k],tr=t.shape.right[k];if(tr<=tl){tl=sl;tr=sr;}
+        auto edge=[&](const PoseShape& p,double& a,double& b){if(p.right[k]<=p.left[k]){a=tl;b=tr;}else{a=p.left[k];b=p.right[k];}};
+        double al,ar,bl,br;edge(m.start,al,ar);edge(m.to.shape,bl,br);
+        // Displace this row's own exact hull by the interpolated difference.
+        row.sl=sl;row.sr=sr;row.l=sl+(al+(bl-al)*s-tl);row.r=sr+(ar+(br-ar)*s-tr);
+        if(row.r-row.l<1)continue;
+        row.y=y;lo=std::min(lo,row.l);hi=std::max(hi,row.r);
+    }
+    if(hi<=lo){m.active=false;return false;}
+    int left=(int)std::floor(lo),width=(int)std::ceil(hi)-left;
+    auto& f=m.frame;f.width=width;f.height=rows;f.anchor_x=-left;f.anchor_y=rows;f.palette=art.palette;
+    f.pixels.assign((size_t)width*rows,0);
+    for(int j=0;j<rows;++j){const auto& row=spans[j];if(row.y<0)continue;
+        for(int i=0;i<width;++i){double xa=left+i+.5;if(xa<row.l||xa>=row.r)continue;
+            double us=row.sl+(xa-row.l)*(row.sr-row.sl)/(row.r-row.l);
+            int x=(int)std::floor(t.flip?art.anchor_x-us:art.anchor_x+us);if(x<0||x>=art.width)continue;
+            f.pixels[(size_t)j*width+i]=art.pixels[(size_t)row.y*art.width+x];
+        }
+    }
+    f.coverage.build(width,rows,f.pixels.data());
+    m.part=ActorArt{&f,SourcePart{cache.root.x,cache.root.y,cache.root.scale,152,t.image,0,t.flags,0},t.attr&~0x1800u,t.base,false};
+    m.built=tick;return true;
+}
+// ---- Prototype 04: temporal pixel dissolve (RR_MOTORCYCLE_MOTION=6) ----------
+// Only the riding lean ladders (ids 0-6 and 16-22 of the RR1 image table);
+// combat, falls, start/recovery cycles and mirror changes keep the native swap.
+bool dissolve_riding_pose(unsigned id){return id<=6||(id>=16&&id<=22);}
+DissolveImage dissolve_image(const rr::SpriteAsset& a,bool flip){
+    DissolveImage out;out.width=a.width;out.height=a.height;out.anchor_y=a.anchor_y;
+    out.anchor_x=flip?a.width-a.anchor_x:a.anchor_x;out.pixels=a.pixels;
+    if(flip)for(int y=0;y<a.height;++y)
+        std::reverse(out.pixels.begin()+(size_t)y*a.width,out.pixels.begin()+(size_t)(y+1)*a.width);
+    return out;
+}
+bool dissolve_stats(const DissolveImage& i,double& cx,double& top,double& bottom){
+    double sum=0;size_t n=0;top=1e9;bottom=-1e9;
+    for(int y=0;y<i.height;++y)for(int x=0;x<i.width;++x)if(i.pixels[(size_t)y*i.width+x]){
+        sum+=x-i.anchor_x;++n;top=std::min(top,(double)(y-i.anchor_y));bottom=std::max(bottom,(double)(y-i.anchor_y+1));}
+    if(!n)return false;cx=sum/n;return true;
+}
+// A pose swap, not another kind of image: similar horizontal mass and extent.
+bool dissolve_compatible(const DissolveImage& a,const DissolveImage& b){
+    double ax,at,ab,bx,bt,bb;
+    if(!dissolve_stats(a,ax,at,ab)||!dissolve_stats(b,bx,bt,bb))return false;
+    return std::abs(ax-bx)<=24&&std::abs(at-bt)<=24&&std::abs(ab-bb)<=10;
+}
+unsigned dissolve_pixel(const DissolveImage& i,int rx,int ry){
+    int x=i.anchor_x+rx,y=i.anchor_y+ry;
+    return x<0||y<0||x>=i.width||y>=i.height?0u:i.pixels[(size_t)y*i.width+x];
+}
+// Pixels with Bayer rank < threshold (of 16) show the new image.
+DissolveImage dissolve_blend(const DissolveImage& from,const DissolveImage& to,unsigned threshold){
+    static constexpr unsigned bayer[4][4]={{0,8,2,10},{12,4,14,6},{3,11,1,9},{15,7,13,5}};
+    int left=-std::max(from.anchor_x,to.anchor_x),right=std::max(from.width-from.anchor_x,to.width-to.anchor_x);
+    int top=-std::max(from.anchor_y,to.anchor_y),bottom=std::max(from.height-from.anchor_y,to.height-to.anchor_y);
+    DissolveImage out;out.width=right-left;out.height=bottom-top;out.anchor_x=-left;out.anchor_y=-top;
+    out.pixels.assign((size_t)out.width*out.height,0);
+    for(int oy=0;oy<out.height;++oy)for(int ox=0;ox<out.width;++ox){
+        int rx=left+ox,ry=top+oy;
+        out.pixels[(size_t)oy*out.width+ox]=(uint8_t)(bayer[ry&3][rx&3]<threshold?dissolve_pixel(to,rx,ry):dissolve_pixel(from,rx,ry));
+    }
+    return out;
+}
+// Called when the native image of an actor is (re)committed. `known` = a
+// complete, single-priority, unflipped-vertically rider image.
+int dissolve_commit(Dissolve& d,DissolveImage&& image,unsigned id,unsigned second,unsigned flags,
+                            unsigned attr,unsigned base,bool known){
+    if(!known){d.active=false;d.known=false;return -1;}
+    bool same=d.known&&d.id==id&&d.second==second&&d.flags==flags;
+    if(same)return 0;int reason=7;
+    unsigned interval=d.known&&tick>d.committed?(unsigned)(tick-d.committed):0;
+    bool candidate=d.known&&interval>0&&interval<=12&&(d.attr&0xe800)==(attr&0xe800)&&d.base==base&&
+        dissolve_riding_pose(id)&&dissolve_riding_pose(d.id)&&(d.flags&0x8000)==(flags&0x8000);
+    bool mixing=d.active&&d.built!=UINT64_MAX&&d.shown.width>0;
+    d.active=false;if(d.known&&!candidate)reason=5;
+    if(candidate){
+        // An interrupted transition continues from what is on screen: the new
+        // pose cancels the old one without a snap.
+        const DissolveImage& source=mixing?d.shown:d.to;
+        if(dissolve_compatible(source,image)){
+            DissolveImage keep=source;d.from=std::move(keep);d.from_id=d.id;
+            d.frames=(unsigned)std::clamp((int)interval-1,1,3);d.begin=tick;d.active=true;d.built=UINT64_MAX;
+            d.shown=DissolveImage{};++dissolve_swaps;reason=0;
+        }else reason=6;
+    }
+    d.to=std::move(image);d.id=id;d.second=second;d.flags=flags;d.attr=attr;d.base=base;
+    d.known=true;d.committed=tick;return reason;
+}
+// Builds this frame's mix. False = show the native pose (transition over).
+bool build_dissolve(Dissolve& d,const Pose& root,uint32_t actor,bool player){
+    if(!d.active)return false;
+    if(tick<d.begin||tick-d.begin>=d.frames){d.active=false;return false;}
+    if(d.built==tick)return true;
+    unsigned k=(unsigned)(tick-d.begin)+1,threshold=(16*k+(d.frames+1)/2)/(d.frames+1);
+    d.shown=dissolve_blend(d.from,d.to,threshold);
+    auto& f=d.frame;f.width=d.shown.width;f.height=d.shown.height;f.anchor_x=d.shown.anchor_x;f.anchor_y=d.shown.anchor_y;
+    f.palette=0;f.pixels=d.shown.pixels;f.coverage.build(f.width,f.height,f.pixels.data());
+    d.part=ActorArt{&f,SourcePart{root.x,root.y,root.scale,152,d.id,d.second,d.flags,0},d.attr&~0x1800u,d.base,false};
+    d.built=tick;++dissolve_frames;
+    if(dissolve_trace)std::fprintf(dissolve_trace,"%llu,%s,%06X,%u,%u,%u,%u,%u,%.3f\n",(unsigned long long)tick,player?"player":"rival",
+        actor,d.from_id,d.id,k,d.frames,threshold,(double)threshold/16.);
+    return true;
+}
+void commit_dissolve(ActorCache& cache,const SourcePacket *packet){
+    DissolveImage image;unsigned id=0,flags=0,attr=0,base=0;bool known=false;int why=1;
+    // Same qualification as the other prototypes: ONE complete rider image that
+    // classic already draws from its own qualified source (rivals have no overlay).
+    if(packet&&packet->parts.size()==1&&!packet->parts[0].second&&!(packet->parts[0].flags&0x4000)&&cache.parts.size()==1){
+        const auto& p=packet->parts[0];const auto& drawn=cache.parts[0];
+        why=!(drawn.art&&drawn.source.image==p.image)?2:(drawn.attr&0x1000)?3:!(cache.focal>0&&std::abs(cache.focal-2.5*view_focal)<1e-9)?4:0;id=p.image;
+        if(!why){
+            image=dissolve_image(*drawn.art,(drawn.attr&0x0800)!=0);id=p.image;flags=p.flags&0xc080;
+            attr=drawn.attr;base=drawn.base;known=image.width>0;
+        }
+    }
+    const Dissolve before=cache.dissolve;
+    int result=dissolve_commit(cache.dissolve,std::move(image),id,0,flags,attr,base,known);
+    if(dissolve_trace&&result!=0){int reason=result<0?why:result;   // diagnostic: why a swap stayed native
+        std::fprintf(dissolve_trace,"%llu,rival-skip,%06X,%u,%u,%d,0,0,0,attr %04X>%04X base %X>%X flags %04X>%04X age %llu\n",(unsigned long long)tick,cache.actor,before.id,id,reason,
+            before.attr,attr,before.base,base,before.flags,flags,(unsigned long long)(tick-before.committed));}
+}
+// The player's complete native bitmap (bike, rider and the `second` overlay with
+// their own palette lines) is the unit: each layer thus dissolves from its own
+// old pixels to its own new pixels. Native SAT stays authoritative for position.
+bool track_player_dissolve(const GVDP *v,const Job& job,double x){
+    auto& cache=player_cache;auto& d=cache.dissolve;
+    cache.root=Pose{x,job.y,1.};
+    if(job.serial!=player_serial){
+        player_serial=job.serial;
+        DissolveImage image;bool known=false;unsigned high=2;
+        ActorCanvas canvas;const std::vector<const Job*> one{&job};
+        if(!(job.flags&0x4000)&&compose_actor(v,one,cache.root,canvas)&&canvas.width>0&&canvas.height>0){
+            bool uniform=true;
+            for(size_t n=0;n<canvas.opaque.size();++n)if(canvas.opaque[n]){
+                if(high==2)high=canvas.high[n];else uniform&=canvas.high[n]==high;}
+            if(uniform&&high<2){
+                image.width=canvas.width;image.height=canvas.height;
+                image.anchor_x=(int)std::lround(x-canvas.x);image.anchor_y=(int)std::lround(job.y-canvas.y);
+                image.pixels.assign((size_t)canvas.width*canvas.height,0);
+                for(size_t n=0;n<canvas.opaque.size();++n)if(canvas.opaque[n])image.pixels[n]=canvas.index[n];
+                known=true;
+            }
+        }
+        dissolve_commit(d,std::move(image),job.image,job.second,job.flags&0xc080,high==1?0x8000u:0u,0,known);
+    }
+    return build_dissolve(d,cache.root,(uint32_t)view.player,true);
+}
+void commit_pose(ActorCache& cache,const SourcePacket *packet){
+    if(pose_dissolving)commit_dissolve(cache,packet);
+    if(pose_morphing||pose_following)commit_morph(cache,packet);else cache.morph.active=cache.morph.known=false;
+    const PoseEase previous=cache.ease;
+    PoseEase next;next.committed=tick;
+    if(!pose_easing){cache.ease=next;return;}
+    // Only one complete, unflipped-vertically rider image is a known pose.
+    // Crash pieces, overlays and cars keep the committed native presentation.
+    if(packet&&packet->parts.size()==1&&!packet->parts[0].second&&!(packet->parts[0].flags&0x4000)){
+        const auto& p=packet->parts[0];
+        if(const auto *art=asset(p.image,p.flags)){
+            next.line=pose_line(*art,(p.flags&0x8000)!=0);next.image=p.image;next.flags=p.flags&0xc080;next.known=next.line.valid;
+        }
+    }
+    if(next.known&&previous.known&&tick>previous.committed&&tick-previous.committed<=12&&
+       cache.focal>0&&std::abs(cache.focal-2.5*view_focal)<1e-9){
+        // What the previous frame displayed: its image line plus the share of
+        // an unfinished residual. Chained lean steps therefore stay continuous.
+        double carried=pose_ease_factor(previous,tick-1);
+        double offset=previous.line.offset+previous.offset*carried-next.line.offset;
+        double slope=previous.line.slope+previous.slope*carried-next.line.slope;
+        if(next.image==previous.image&&next.flags==previous.flags){
+            // The same image recommitted by a later native update: continue.
+            next.active=previous.active;next.start=previous.start;next.duration=previous.duration;
+            next.offset=previous.offset;next.slope=previous.slope;
+        }else{
+            double height=std::max(previous.line.height,next.line.height);
+            double reach=std::max(std::abs(offset),std::abs(offset+slope*height));
+            // A larger difference is a different kind of image, not a lean step.
+            if(reach>.05&&reach<=10.){
+                next.active=true;next.start=tick;next.offset=offset;next.slope=slope;
+                next.duration=std::clamp((double)(tick-previous.committed),3.,8.);++pose_eases;
+            }else if(reach>10.)++pose_ease_rejections;
+        }
+    }
+    cache.ease=next;
+}
 void source_motion(ActorCache& cache,const SourcePacket& packet){
     if(packet.parts.empty()||rear_view(packet)||packet.epoch<=cache.motion.serial)return;
     const auto& p=packet.parts.front();Pose next{p.x,p.y,p.scale};auto& m=cache.motion;
@@ -995,22 +1595,439 @@ bool compose_actor(const GVDP *v,const std::vector<const Job*>& jobs,const Pose&
     out=std::move(canvas);return true;
 }
 
-void draw_actors(const GVDPSpriteLayer *layer){
+// RR1 rival name, read the way the game's own HUD routine ($00D73A) does it: slot+0x71 is the rider number n,
+// the per-race table in RAM ($FF0546, or $FF0566 when $FF0508 is set) maps n to a record index, and the name is the
+// first 10 bytes of the ROM record at $CCD0+(index+1)*16 (D038: the old formula was one record short).
+// D040 RR2: the race's circuit (0..4) is the ROM group whose 15 records match the 15 rider slots ($FF0AE2+(n-1)*0x80: +0x74 = n,
+// +0x17 = attribute b10, +0x77 = attribute b11). Groups differ in >=13 of 15 slots, so >=10 matches is unambiguous; fewer = menu/loading.
+int rr2_group(){
+    if(rr2_group_tick==tick)return rr2_group_value;
+    rr2_group_tick=tick;rr2_group_value=-1;
+    if(!source_ram||!source_rom||source_bytes<0x10b32u+75*16)return -1;
+    unsigned best=0;
+    for(unsigned g=0;g<5;++g){unsigned score=0;
+        for(unsigned n=0;n<15;++n){unsigned slot=0x0ae2+n*0x80;const uint8_t *r=source_rom+0x10b32+(g*15+n)*16;
+            if(source_ram[slot+0x74]==n+1&&r[0]==source_ram[slot+0x17]&&r[1]==source_ram[slot+0x77])++score;}
+        if(score>best){best=score;rr2_group_value=(int)g;}}
+    if(best<10)rr2_group_value=-1;
+    return rr2_group_value;
+}
+// D044 RR3: slots $FF0A32+(n-1)*0x80 (+0x0E = n, +0x17 = attribute b10); records at $15F32, 5 circuits x 15.
+int rr3_group(){
+    if(rr3_group_tick==tick)return rr3_group_value;
+    rr3_group_tick=tick;rr3_group_value=-1;
+    if(!source_ram||!source_rom||source_bytes<0x15f32u+75*16)return -1;
+    unsigned best=0;
+    for(unsigned g=0;g<5;++g){unsigned score=0;
+        for(unsigned n=0;n<15;++n){unsigned slot=0x0a32+n*0x80;const uint8_t *r=source_rom+0x15f32+(g*15+n)*16;
+            if(source_ram[slot+0x0e]==n+1&&r[0]==source_ram[slot+0x17])++score;}
+        if(score>best){best=score;rr3_group_value=(int)g;}}
+    if(best<10)rr3_group_value=-1;
+    return rr3_group_value;
+}
+bool rival_name(uint32_t actor,std::string& name){
+    if(game_index==2){
+        if(!source_ram||!source_rom)return false;
+        unsigned a=actor&65535;
+        if(a<0x0a32||a>0x0a32+14*0x80||(a-0x0a32)%0x80)return false;
+        unsigned n=source_ram[(a+0x0e)&65535];if(n<1||n>15)return false;
+        int g=rr3_group();if(g<0)return false;
+        const uint8_t *r=source_rom+0x15f32+(g*15+n-1)*16;
+        if(!r[3])return false;   // police record: never personalised
+        name.assign((const char*)r+6,10);
+        for(char c:name)if(c<32||c>126)return false;
+        while(!name.empty()&&name.back()==' ')name.pop_back();
+        return !name.empty();
+    }
+    if(game_index==1){
+        if(!source_ram||!source_rom)return false;
+        unsigned a=actor&65535;
+        if(a<0x0ae2||a>0x0ae2+14*0x80||(a-0x0ae2)%0x80)return false;
+        unsigned n=source_ram[(a+0x74)&65535];if(n<1||n>15)return false;
+        int g=rr2_group();if(g<0)return false;
+        const uint8_t *r=source_rom+0x10b32+(g*15+n-1)*16;   // record = attributes[6] + name[10]
+        if(!r[3])return false;   // attribute b13 = 0 marks the police record (n=1 of every circuit): never personalised
+        name.assign((const char*)r+6,10);
+        for(char c:name)if(c<32||c>126)return false;
+        while(!name.empty()&&name.back()==' ')name.pop_back();
+        return !name.empty();
+    }
+    if(game_index!=0||!source_ram||!source_rom)return false;
+    unsigned a=actor&65535;
+    if(a<0x1f2a||a>0x262a||(a-0x1f2a)%0x80)return false;   // n=1..8 live in $1F2A..$22AA, n=9..15 in $232A..$262A
+    auto word=[&](unsigned at){return (unsigned)((source_ram[at&65535]<<8)|source_ram[(at+1)&65535]);};
+    unsigned n=source_ram[(a+0x71)&65535];
+    if(n<1||n>15)return false;
+    unsigned table=word(0x508)?0x566:0x546,index=word(table+n*2);
+    if(index>=75)return false;
+    unsigned at=0xccd0+(index+1)*16;if(at+10>source_bytes)return false;
+    name.assign((const char*)source_rom+at,10);
+    for(char c:name)if(c<32||c>126)return false;
+    while(!name.empty()&&name.back()==' ')name.pop_back();
+    return !name.empty();
+}
+// Helmet = the largest {1,2,3,4} blob high on the rider; vest = the largest {4,8,9} blob
+// on the torso (nibbles of the shared RR1 rider palette line). Both are found per image
+// from the pixels themselves, so every pose, mirror and in-between image is covered.
+// D044 RR3 (port of tools/identity_sheets.py classify3): 1 helmet = top-most green {5,6,7} blob, first rows only;
+// 2 vest = grey {8,9,10} nearer to a green than to a bike-only index {1,2,3,15}, grown by 8-connectivity;
+// 3 suit = the other green blob pixels. Unsafe images (no bike, implausible helmet/vest: falls) stay all original.
+void classify_roles3(const uint8_t *nib,int w,int h,std::vector<uint8_t>& out){
+    out.assign((size_t)w*h,0);
+    int top=-1,last=-1;
+    for(int y=0;y<h&&top<0;++y)for(int x=0;x<w;++x)if(nib[y*w+x]){top=y;break;}
+    for(int y=h-1;y>=0&&last<0;--y)for(int x=0;x<w;++x)if(nib[y*w+x]){last=y;break;}
+    if(top<0)return;
+    int fig=last-top+1;
+    std::vector<std::vector<int>> greens;
+    {std::vector<uint8_t> seen((size_t)w*h,0);std::vector<int> stack;
+     for(int start=0;start<w*h;++start){
+        if(seen[start]||nib[start]<5||nib[start]>7)continue;
+        std::vector<int> blob;stack.assign(1,start);seen[start]=1;
+        while(!stack.empty()){int at=stack.back();stack.pop_back();blob.push_back(at);int x=at%w,y=at/w;
+            for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){int u=x+dx,t=y+dy;if(u<0||u>=w||t<0||t>=h)continue;
+                int to=t*w+u;if(!seen[to]&&nib[to]>=5&&nib[to]<=7){seen[to]=1;stack.push_back(to);}}}
+        if(blob.size()>=6)greens.push_back(std::move(blob));}}
+    // Chebyshev distance (two passes) to any green pixel and to bike-only pixels.
+    const int FAR=99;std::vector<int> dg((size_t)w*h,FAR),db((size_t)w*h,FAR);int bikes=0;
+    for(int i=0;i<w*h;++i){if(nib[i]>=5&&nib[i]<=7)dg[i]=0;if(nib[i]==1||nib[i]==2||nib[i]==3||nib[i]==15){db[i]=0;++bikes;}}
+    if(bikes<4||greens.empty())return;
+    auto chebyshev=[&](std::vector<int>& d){
+        for(int y=0;y<h;++y)for(int x=0;x<w;++x){int& c=d[y*w+x];
+            if(x>0)c=std::min(c,d[y*w+x-1]+1);if(y>0){c=std::min(c,d[(y-1)*w+x]+1);
+                if(x>0)c=std::min(c,d[(y-1)*w+x-1]+1);if(x+1<w)c=std::min(c,d[(y-1)*w+x+1]+1);}}
+        for(int y=h-1;y>=0;--y)for(int x=w-1;x>=0;--x){int& c=d[y*w+x];
+            if(x+1<w)c=std::min(c,d[y*w+x+1]+1);if(y+1<h){c=std::min(c,d[(y+1)*w+x]+1);
+                if(x+1<w)c=std::min(c,d[(y+1)*w+x+1]+1);if(x>0)c=std::min(c,d[(y+1)*w+x-1]+1);}}};
+    chebyshev(dg);chebyshev(db);
+    // Helmet: the green blob whose first row is highest (ties: larger).
+    const std::vector<int> *head=nullptr;int headTop=1<<20;
+    for(const auto& b:greens){int t=1<<20;for(int at:b)t=std::min(t,at/w);
+        if(!head||t<headTop||(t==headTop&&b.size()>head->size())){head=&b;headTop=t;}}
+    int limit=headTop+std::max(6,(int)(.16*fig));
+    int bx0=1<<20,by0=1<<20,bx1=-1,by1=-1,hn=0;double cy=0;
+    for(int at:*head){int x=at%w,y=at/w;if(y>=limit)continue;
+        out[at]=1;++hn;cy+=y;bx0=std::min(bx0,x);by0=std::min(by0,y);bx1=std::max(bx1,x);by1=std::max(by1,y);}
+    if(!hn||cy/hn-top>.4*fig){std::fill(out.begin(),out.end(),0);return;}
+    bx0--;by0--;bx1++;by1++;
+    std::vector<uint8_t> near((size_t)w*h,0),seen((size_t)w*h,0);std::vector<int> stack;
+    for(int y=0;y<h;++y)for(int x=0;x<w;++x){int i=y*w+x;
+        if(nib[i]>=8&&nib[i]<=10&&!(x>=bx0&&x<=bx1&&y>=by0&&y<=by1)&&dg[i]<=db[i]){near[i]=1;if(dg[i]<=8){seen[i]=1;stack.push_back(i);}}}
+    int vest=0;
+    while(!stack.empty()){int at=stack.back();stack.pop_back();out[at]=2;++vest;int x=at%w,y=at/w;
+        for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){int u=x+dx,t=y+dy;if(u<0||u>=w||t<0||t>=h)continue;
+            int to=t*w+u;if(near[to]&&!seen[to]){seen[to]=1;stack.push_back(to);}}}
+    if(vest<12){std::fill(out.begin(),out.end(),0);return;}
+    for(const auto& b:greens)for(int at:b)if(!out[at])out[at]=3;
+}
+void classify_roles(const uint8_t *nib,int w,int h,std::vector<uint8_t>& out){
+    if(game_index==2){classify_roles3(nib,w,h,out);return;}
+    out.assign((size_t)w*h,0);
+    auto blobs=[&](unsigned mask){
+        std::vector<std::vector<int>> found;std::vector<uint8_t> seen((size_t)w*h,0);std::vector<int> stack;
+        for(int start=0;start<w*h;++start){
+            if(seen[start]||!((mask>>nib[start])&1))continue;
+            std::vector<int> blob;stack.assign(1,start);seen[start]=1;
+            while(!stack.empty()){int at=stack.back();stack.pop_back();blob.push_back(at);
+                int x=at%w,y=at/w;
+                for(int dy=-1;dy<=1;++dy)for(int dx=-1;dx<=1;++dx){int u=x+dx,t=y+dy;
+                    if(u<0||u>=w||t<0||t>=h)continue;int to=t*w+u;
+                    if(!seen[to]&&((mask>>nib[to])&1)){seen[to]=1;stack.push_back(to);}}}
+            found.push_back(std::move(blob));
+        }
+        return found;};
+    auto pick=[&](unsigned mask,double lo,double hi,uint8_t role,bool skip_marked){
+        const std::vector<int> *best=nullptr;std::vector<int> kept,bestkept;
+        auto all=blobs(mask);
+        for(auto& blob:all){kept.clear();double cy=0;
+            for(int at:blob)if(!skip_marked||!out[at]){kept.push_back(at);cy+=at/w;}
+            if(kept.empty())continue;cy/=kept.size();
+            if(cy>h*lo&&cy<h*hi&&(!best||kept.size()>bestkept.size())){bestkept=kept;best=&blob;}}
+        for(int at:bestkept)out[at]=role;};
+    pick(0x1e,-1,.35,1,false);   // nibbles 1,2,3,4
+    pick(0x310,.06,.55,2,true);  // nibbles 4,8,9
+    // D034 suit: every yellow blob (nibbles 5,6,7) of >=6 px not already helmet/vest; bike/boots use other nibbles.
+    for(auto& blob:blobs(0xe0))if(blob.size()>=6)for(int at:blob)if(!out[at])out[at]=3;
+}
+const RoleMap *image_roles(const rr::SpriteAsset& image){
+    auto& e=role_maps[&image];
+    if(e.tick!=tick){e.tick=tick;uint32_t hash=2166136261u;
+        for(uint8_t n:image.pixels)hash=(hash^n)*16777619u;
+        if(e.w!=image.width||e.h!=image.height||e.hash!=hash||e.roles.empty()){
+            e.w=image.width;e.h=image.height;e.hash=hash;
+            if(image.pixels.size()==(size_t)image.width*image.height){
+                classify_roles(image.pixels.data(),image.width,image.height,e.roles);
+                std::vector<uint8_t> coded(image.pixels.size());
+                for(size_t i=0;i<coded.size();++i)coded[i]=image.pixels[i]?(uint8_t)(image.pixels[i]+16*e.roles[i]):0;
+                e.coded.build(image.width,image.height,coded.data());}
+            else e.roles.assign((size_t)image.width*image.height,0);}}
+    return &e;
+}
+const RoleMap *canvas_roles(const ActorCanvas& canvas){
+    auto& e=role_maps[&canvas];
+    if(e.tick!=tick){e.tick=tick;std::vector<uint8_t> nib(canvas.index.size(),0);uint32_t hash=2166136261u;
+        for(size_t i=0;i<nib.size();++i){nib[i]=canvas.opaque[i]&&(canvas.index[i]>>4)==2?canvas.index[i]&15:0;
+            hash=(hash^canvas.index[i]^(canvas.opaque[i]?256u:0u)^(canvas.high[i]?512u:0u))*16777619u;}
+        if(e.w!=canvas.width||e.h!=canvas.height||e.hash!=hash||e.roles.empty()){
+            e.w=canvas.width;e.h=canvas.height;e.hash=hash;classify_roles(nib.data(),canvas.width,canvas.height,e.roles);
+            std::vector<uint8_t> coded(nib.size(),0);
+            for(size_t i=0;i<coded.size();++i)if(canvas.opaque[i])
+                coded[i]=(canvas.index[i]>>4)==2?(uint8_t)(nib[i]+16*e.roles[i]):(uint8_t)(64+(canvas.index[i]&63));
+            e.coded.build(canvas.width,canvas.height,coded.data(),canvas.opaque.data(),canvas.high.data());}}
+    return &e;
+}
+const RivalLook *rival_look(const std::string& name){   // null = keep the original look (police, unknown)
+    // RR2 names have irregular case in the ROM ("ralph", "Rude Boy"): compare without case. RR2 own kits first, then the shared RR1 kits.
+    auto same=[&](const char *a){size_t n=name.size();if(std::strlen(a)!=n)return false;
+        for(size_t i=0;i<n;++i)if(std::tolower((unsigned char)a[i])!=std::tolower((unsigned char)name[i]))return false;return true;};
+    if(game_index==2){
+        for(const auto& look:rr3_looks)if(same(look.name))return &look;
+        for(const auto& look:rr2_looks)if(same(look.name))return &look;   // P.E. No.1, Sven, Jorg
+        for(const auto& look:rr1_looks)if(same(look.name))return &look;   // Natasha, Ikira, Biff, Axle, Sergio
+        return nullptr;
+    }
+    if(game_index==1){
+        for(const auto& look:rr2_looks)if(same(look.name))return &look;
+        for(const auto& look:rr1_looks)if(same(look.name))return &look;   // Natasha, Slater, Rude Boy, Axle, Viper, Ikira, Biff = RR1 kits
+        return nullptr;
+    }
+    for(const auto& look:rr1_looks)if(name==look.name)return &look;
+    return nullptr;
+}
+// D036: which SAT slots belong to which rival, from the captured jobs (newest first, SAT must match exactly).
+// Runs every frame whether or not the geometry scene is active. When no job explains a slot but its SAT bytes
+// are unchanged since the previous frame (pause, a lapsed job), the previous owner is kept.
+void identity_own(const GVDP *v){
+    if(id_owner_tick==tick)return;id_owner_tick=tick;
+    unsigned sat=(v->reg[5]&((v->reg[12]&1)?0x7e:0x7f))<<9;native_sat=sat;
+    std::array<bool,80> linked{},taken{};unsigned link=0;
+    for(unsigned n=0;n<80&&link<80&&!linked[link];++n){
+        linked[link]=true;unsigned next=v->vram[(sat+link*8+3)&65535]&127;
+        if(!next)break;link=next;
+    }
+    std::array<uint32_t,80> owner{},group{};
+    std::vector<const Job*> sources;
+    for(auto it=pending.rbegin();it!=pending.rend();++it)sources.push_back(&*it);
+    for(auto it=id_archive.rbegin();it!=id_archive.rend();++it)sources.push_back(&*it);   // D038: jobs that outlived a scene reset
+    for(const Job *source:sources){
+        const Job& job=*source;
+        if(!job.projection.actor||job.projection.player)continue;
+        if(tick<job.tick||tick-job.tick>240||job.first<0||job.first>=80||!linked[job.first]||taken[job.first])continue;
+        if(!matches(job,v,sat))continue;
+        bool overlap=false;
+        for(size_t n=0;n<job.pieces.size();++n)overlap|=taken[job.first+n]||!linked[job.first+n];
+        if(overlap)continue;
+        // One job can hold several riders far apart (the two HUD mirrors): split its pieces into horizontal clusters.
+        std::vector<size_t> order(job.pieces.size());
+        for(size_t n=0;n<order.size();++n)order[n]=n;
+        auto left_of=[&](size_t n){return (int)(((job.pieces[n].sat[6]<<8|job.pieces[n].sat[7])&511)-128);};
+        std::sort(order.begin(),order.end(),[&](size_t a,size_t b){return left_of(a)<left_of(b);});
+        unsigned cluster=0;int reach=-(1<<20);
+        for(size_t k=0;k<order.size();++k){
+            size_t n=order[k];int x=left_of(n),w=(((job.pieces[n].sat[2]>>2)&3)+1)*8;
+            if(k&&x>reach+40)++cluster;
+            reach=k?std::max(reach,x+w):x+w;
+            owner[job.first+n]=job.projection.actor;group[job.first+n]=(uint32_t)job.first+1+cluster*100;taken[job.first+n]=true;
+        }
+    }
+    for(unsigned s=0;s<80;++s){
+        uint64_t sig=1469598103934665603ull;
+        for(unsigned k=0;k<8;++k)if(k!=3)sig=(sig^v->vram[(sat+s*8+k)&65535])*1099511628211ull;   // every byte but the link: unchanged SAT entry (pause)
+        if(!owner[s]&&linked[s]&&id_prev_owner[s]&&id_sig[s]==sig){owner[s]=id_prev_owner[s];group[s]=id_prev_group[s];}
+        // D038: the game alternates two pattern banks and a scene reset empties the job list, so a bank shown again
+        // after a gap has no job that explains it. The exact same SAT bytes in the same slot keep their earlier owner.
+        {uint64_t key=(sig^(s+1))*1099511628211ull;
+         if(owner[s]){if(id_memory.size()>4096)id_memory.clear();id_memory[key]={owner[s],group[s]};}
+         else if(linked[s]){auto it=id_memory.find(key);if(it!=id_memory.end()){owner[s]=it->second.first;group[s]=it->second.second;}}}
+        id_sig[s]=sig;
+    }
+    id_prev_owner=owner;id_prev_group=group;slot_actor=owner;slot_group=group;id_live=linked;
+}
+void native_roles_build(const GVDP *v,uint32_t actor,uint32_t group,NativeRoles& out){
+    struct Cell {int x,y,w,h;unsigned attr,size,slot;};
+    std::vector<Cell> cells;int left=1<<20,top=1<<20,right=-(1<<20),bottom=-(1<<20);
+    auto byte=[&](unsigned at){return (unsigned)v->vram[at&65535];};
+    for(unsigned s=0;s<80;++s){
+        if(slot_actor[s]!=actor||slot_group[s]!=group||!id_live[s])continue;
+        unsigned b=native_sat+s*8;
+        Cell c;c.y=(int)(((byte(b)<<8)|byte(b+1))&511)-128;c.size=byte(b+2);c.attr=(byte(b+4)<<8)|byte(b+5);
+        c.x=(int)(((byte(b+6)<<8)|byte(b+7))&511)-128;c.w=(((c.size>>2)&3)+1)*8;c.h=((c.size&3)+1)*8;c.slot=s;
+        cells.push_back(c);left=std::min(left,c.x);top=std::min(top,c.y);right=std::max(right,c.x+c.w);bottom=std::max(bottom,c.y+c.h);
+    }
+    if(cells.empty()||right-left>256||bottom-top>256)return;
+    out.left=left;out.top=top;out.w=right-left;out.h=bottom-top;
+    std::vector<uint8_t> nib((size_t)out.w*out.h,0),opaque((size_t)out.w*out.h,0);
+    for(const auto& c:cells){
+        out.pieces.push_back({c.slot,c.x-left,c.y-top,c.w,c.h});
+        unsigned bytes=0;const uint8_t *patterns=gvdp_sprite_patterns(c.size,&bytes);
+        for(int y=0;y<c.h;++y)for(int x=0;x<c.w;++x){
+            size_t dest=(size_t)(c.y-top+y)*out.w+(c.x-left+x);if(opaque[dest])continue;
+            int u=(c.attr&0x0800)?c.w-1-x:x,w=(c.attr&0x1000)?c.h-1-y:y;
+            unsigned tile=((c.attr&2047)+(u>>3)*(c.h/8)+(w>>3))&2047,at=tile*32+(w&7)*4+(u&7)/2;
+            unsigned data=patterns?(at<bytes?patterns[at]:0):v->vram[at&65535];
+            unsigned n=(data>>((u&1)?0:4))&15;if(!n)continue;
+            opaque[dest]=1;nib[dest]=((c.attr>>13)&3)==2?(uint8_t)n:0;
+        }
+    }
+    classify_roles(nib.data(),out.w,out.h,out.roles);
+}
+// Recolour the native sprite pixels owned by a rival (visible hardware sprites on this row).
+void recolor_native(const GVDPSpriteLayer *layer){
+    if(!layer->owner)return;
+    for(const auto& item:native_roles){
+        const auto *look=identity_of((uint32_t)item.first);if(!look)continue;
+        const auto& r=item.second;
+        for(const auto& piece:r.pieces){
+            // The piece is shown where the geometry layer puts it (scaled/shifted rect), not where the SAT says.
+            auto b=bounds[piece.slot];
+            if(!b.valid)b={(double)(r.left+piece.cx),(double)(r.top+piece.cy),(double)(r.left+piece.cx+piece.w),(double)(r.top+piece.cy+piece.h),true};   // D035: unreplaced native piece
+            if(b.x1<=b.x0||b.y1<=b.y0)continue;
+            if(layer->line+.5<b.y0||layer->line+.5>=b.y1)continue;
+            int ty=std::clamp((int)std::floor((layer->line+.5-b.y0)*piece.h/(b.y1-b.y0)),0,piece.h-1);
+            int begin=std::max(0,(int)std::ceil(b.x0+layer->offset-.5)),end=std::min(layer->total,(int)std::ceil(b.x1+layer->offset-.5));
+            for(int px=begin;px<end;++px){
+                if(!layer->opaque[px]||layer->owner[px]!=piece.slot+1)continue;
+                uint8_t index=layer->index[px];if((index>>4)!=2)continue;
+                int tx=std::clamp((int)std::floor((px+.5-layer->offset-b.x0)*piece.w/(b.x1-b.x0)),0,piece.w-1);
+                unsigned role=r.roles[(size_t)(piece.cy+ty)*r.w+(piece.cx+tx)];if(!role)continue;
+                unsigned slot=(*look)[(role-1)*16+(index&15)];
+                if(slot){layer->index[px]=(uint8_t)(GVDP_HOST_PALETTE_BASE+slot-1);}
+            }
+        }
+    }
+}
+// Once per frame: assign every visible rival its helmet/vest host-palette entries.
+void identity_build(const GVDP *v){
+    identity_own(v);
+    identity_slots_tick=tick;identity_map.clear();identity_entries.clear();native_roles.clear();
+    identity_blocks.clear();identity_block_looks.clear();
+    std::vector<uint32_t> actors;   // every rival with live sprites or a geometry drawing this frame
+    for(uint32_t actor:slot_actor)if(actor&&std::find(actors.begin(),actors.end(),actor)==actors.end())actors.push_back(actor);
+    for(const auto& drawing:actor_drawings)if(std::find(actors.begin(),actors.end(),drawing.actor)==actors.end())actors.push_back(drawing.actor);
+    for(uint32_t actor:actors){
+        struct {uint32_t actor;} drawing{actor};
+        if(identity_map.count(drawing.actor))continue;
+        std::string name;if(!rival_name(drawing.actor,name))continue;
+        const RivalLook *found_look=rival_look(name);
+        {static const bool trace=std::getenv("RR_IDENTITY_TRACE")!=nullptr;static std::map<std::string,int> seen_names;
+         if(trace&&seen_names[name]++==0)std::fprintf(stderr,"[IDENTITY] tick=%llu actor=%06X name=%s kit=%s\n",(unsigned long long)tick,actor,name.c_str(),found_look?"yes":"NO (original)");}
+        if(!found_look)continue;
+        RivalLook look=*found_look;std::array<uint8_t,48> slots{};bool full=false;
+        // One composed bitmap per job group (forward rider, near rider, each mirror copy are far apart on screen).
+        std::vector<std::pair<uint64_t,NativeRoles>> groups;std::vector<uint32_t> done;
+        for(unsigned s=0;s<80;++s){
+            if(slot_actor[s]!=actor||!id_live[s]||std::find(done.begin(),done.end(),slot_group[s])!=done.end())continue;
+            done.push_back(slot_group[s]);NativeRoles r;native_roles_build(v,actor,slot_group[s],r);
+            if(!r.pieces.empty())groups.push_back({((uint64_t)slot_group[s]<<32)|actor,std::move(r)});
+        }
+        // Host palette entries (63 max) only matter for native SAT pixels or the no-coverage fallback.
+        const bool need_host=!coverage_enabled||!groups.empty();
+        auto entry=[&](uint8_t role,uint8_t nib,uint32_t target)->uint8_t{
+            for(size_t i=0;i<identity_entries.size();++i){const auto& e=identity_entries[i];
+                if(e.role==role&&e.nib==nib&&e.target==target)return (uint8_t)(i+1);}
+            if(identity_entries.size()>=GVDP_HOST_PALETTE_SIZE){full=true;return 0;}
+            identity_entries.push_back({target,role,nib});return (uint8_t)identity_entries.size();};
+        if(need_host&&game_index==2){
+            for(uint8_t nib:{5,6,7})slots[nib]=entry(1,nib,look.helmet);
+            for(uint8_t nib:{8,9,10})slots[16+nib]=entry(2,nib,look.vest);
+            for(uint8_t nib:{5,6,7})slots[32+nib]=entry(3,nib,look.suit);}
+        else if(need_host){for(uint8_t nib:{1,2,3,4})slots[nib]=entry(1,nib,look.helmet);
+        for(uint8_t nib:{4,8,9})slots[16+nib]=entry(2,nib,look.vest);
+        for(uint8_t nib:{5,6,7})slots[32+nib]=entry(3,nib,look.suit);}
+        (void)full;   // host palette is only the RR_SPRITE_COVERAGE=0 fallback; the coverage block below never depends on it
+        identity_map[drawing.actor]=slots;
+        if(identity_block_looks.size()<MAX_IDENTITY_BLOCKS){
+            identity_blocks[drawing.actor]=(int)identity_block_looks.size();identity_block_looks.push_back(look);}
+        for(auto& g:groups)native_roles[g.first]=std::move(g.second);
+    }
+}
+// Helmet shades follow the rider's blue ramp (1 main, 2 darker, 3 darkest, 4 highlight); vest shades follow
+// the white ramp (8 main, 9 stripe, 4 accent). `fade` is the live brightness of the rider palette line.
+uint32_t identity_color(uint32_t target,unsigned role,unsigned nib,const double *fade){
+    double c[3]={(double)((target>>16)&255),(double)((target>>8)&255),(double)(target&255)},f=1;
+    if(game_index==2){   // D044 RR3: helmet and suit share the green ramp (6 main, 5 highlight, 7 dark); vest = grey 8/9/A
+        if(role==2)f=nib==8?1.:(nib==9?.85:.7);
+        else{f=nib==6?1.:.55;if(nib==5){for(double& x:c)x+=(255-x)*.45;f=1;}}}
+    else if(role==1){static const double shade[5]={0,1,.66,.38,0};f=shade[nib&7];
+        if(nib==4){for(double& x:c)x+=(255-x)*.45;f=1;}}
+    else if(role==3){f=nib==6?1.:.55;if(nib==5){for(double& x:c)x+=(255-x)*.45;f=1;}}
+    else f=nib==8?1.:(nib==9?.75:.55);
+    // D037: shade, then the live per-channel fade, then snap to the Mega Drive DAC ladder (3 bits per channel),
+    // so the result is a colour the original palette can actually show.
+    static const double ladder[8]={0,49,87,119,146,174,206,255};
+    uint32_t out=0xff000000u;
+    for(int k=0;k<3;++k){
+        double x=c[k]*f*fade[k];int best=0;
+        for(int i=1;i<8;++i)if(std::fabs(ladder[i]-x)<std::fabs(ladder[best]-x))best=i;
+        out|=(uint32_t)ladder[best]<<(16-8*k);
+    }
+    return out;
+}
+// Per-channel brightness of the rider line (white entry, CRAM 40 = $EEE at full brightness); follows the
+// game's own fades, including the tinted fade-in, never its hue.
+void identity_fade(const GVDP *v,double *fade){
+    unsigned c=v->cram[40];const double ref=game_index==2?6.:7.;   // RR3 rider-line white is $CCC, not $EEE
+    fade[0]=std::min(1.,((c>>1)&7)/ref);fade[1]=std::min(1.,((c>>5)&7)/ref);fade[2]=std::min(1.,((c>>9)&7)/ref);
+}// Per scanline: the entry colours follow the live CRAM fade of the rider line, never its hue.
+void identity_palette(const GVDP *v){
+    if(identity_entries.empty())return;
+    double fade[3];identity_fade(v,fade);
+    std::array<uint32_t,GVDP_HOST_PALETTE_SIZE> palette;palette.fill(0xff000000);
+    for(size_t i=0;i<identity_entries.size();++i){const auto& e=identity_entries[i];palette[i]=identity_color(e.target,e.role,e.nib,fade);}
+    gvdp_set_host_palette(palette.data(),(unsigned)identity_entries.size());
+}
+// Coverage resolver palette: one block per rival at COVERAGE_BLOCK_BASE+k*COVERAGE_BLOCK_SIZE:
+// [0..15] line-2 nibbles, [16..31] helmet, [32..47] vest, [48..111] CRAM 0..63 (all from the live CRAM).
+void identity_blocks_fill(const GVDP *v,uint32_t *palette){
+    double fade[3];identity_fade(v,fade);
+    for(size_t k=0;k<identity_block_looks.size();++k){
+        uint32_t *block=palette+COVERAGE_BLOCK_BASE+k*COVERAGE_BLOCK_SIZE;
+        for(unsigned n=0;n<16;++n){uint32_t native=palette[32+n];block[n]=native;block[16+n]=native;block[32+n]=native;block[48+n]=native;}
+        if(game_index==2){
+            for(unsigned n:{5u,6u,7u})block[16+n]=identity_color(identity_block_looks[k].helmet,1,n,fade);
+            for(unsigned n:{8u,9u,10u})block[32+n]=identity_color(identity_block_looks[k].vest,2,n,fade);
+            for(unsigned n:{5u,6u,7u})block[48+n]=identity_color(identity_block_looks[k].suit,3,n,fade);
+        }else{
+        for(unsigned n:{1u,2u,3u,4u})block[16+n]=identity_color(identity_block_looks[k].helmet,1,n,fade);
+        for(unsigned n:{4u,8u,9u})block[32+n]=identity_color(identity_block_looks[k].vest,2,n,fade);
+        for(unsigned n:{5u,6u,7u})block[48+n]=identity_color(identity_block_looks[k].suit,3,n,fade);}
+        for(unsigned i=0;i<64;++i)block[64+i]=palette[i];
+    }
+}
+const std::array<uint8_t,48> *identity_of(uint32_t actor){
+    auto found=identity_map.find(actor);return found==identity_map.end()?nullptr:&found->second;
+}
+
+void draw_actors(const GVDPSpriteLayer *layer,const GVDP *v){
+    if(rival_identity&&!(v->reg[12]&8)){
+        if(identity_slots_tick!=tick)identity_build(v);
+        identity_palette(v);
+        recolor_native(layer);
+    }
     for(const auto& drawing:actor_drawings){
         const auto& cache=*drawing.cache;const auto& art=cache.canvas;double ratio=drawing.ratio;
         unsigned *pixels=pixel_trace?&vehicle_pixels[drawing.actor]:nullptr;
         if(layer->line+.5>=drawing.clip)continue;
-        if(arcade_motion()&&!cache.parts.empty()&&(!cache.focal||
-           coverage_enabled||(drawing.root.scale>=.25&&art.height*ratio>=16&&art.width*ratio>=8))){
-            for(const auto& p:cache.parts){const auto& image=*p.art;const auto& s=p.source;
+        // Whole-row displacement only: every row keeps its own texels, width,
+        // transparency, priority, hill clip and viewport limits.
+        const double shift=drawing.row_shift(layer->line);
+        const std::array<uint8_t,48> *look=rival_identity?identity_of(drawing.actor):nullptr;
+        const ActorArt *part=drawing.morph?drawing.morph:cache.parts.data();
+        const size_t part_count=drawing.morph?1:cache.parts.size();
+        if(drawing.morph||(arcade_motion()&&!cache.parts.empty()&&(!cache.focal||
+           coverage_enabled||(drawing.root.scale>=.25&&art.height*ratio>=16&&art.width*ratio>=8)))){
+            for(size_t part_index=0;part_index<part_count;++part_index){const auto& p=part[part_index];
+                const auto& image=*p.art;const auto& s=p.source;
                 double scale=s.scale*ratio,x=drawing.root.x+(s.x-cache.root.x)*ratio;
                 double y=drawing.root.y+(s.y-cache.root.y)*ratio;
                 int ax=(p.attr&0x0800)?image.width-image.anchor_x:image.anchor_x;
                 int ay=(p.attr&0x1000)?image.height-image.anchor_y:image.anchor_y;
                 double left=x-ax*scale+layer->offset,top=y-ay*scale;
+                if(shift!=0)left+=shift;
                 int w=(int)std::floor((layer->line+.5-top)/scale);
                 if(w<0||w>=image.height)continue;
                 if(p.attr&0x1000)w=image.height-1-w;
+                const RoleMap *roles=look?image_roles(image):nullptr;
                 int begin=std::max(std::max(0,left_edge()+layer->offset),(int)std::ceil(left-.5));
                 int end=std::min(std::min(layer->total,right_edge()+layer->offset),(int)std::ceil(left+image.width*scale-.5));
                 for(int px=begin;px<end;++px){
@@ -1018,7 +2035,10 @@ void draw_actors(const GVDPSpriteLayer *layer){
                     int u=(int)std::floor((px+.5-left)/scale);if(u<0||u>=image.width)continue;
                     if(p.attr&0x0800)u=image.width-1-u;
                     unsigned nib=image.pixels[w*image.width+u];if(!nib)continue;
-                    layer->index[px]=(uint8_t)(p.base+nib);layer->high[px]=(p.attr>>15)&1;layer->opaque[px]=1;
+                    uint8_t shown=(uint8_t)(p.base+nib);
+                    if(look&&p.base==32){unsigned role=roles->roles[w*image.width+u];   // palette line 2 only
+                        if(role){unsigned slot=(*look)[(role-1)*16+nib];if(slot){shown=(uint8_t)(GVDP_HOST_PALETTE_BASE+slot-1);}}}
+                    layer->index[px]=shown;layer->high[px]=(p.attr>>15)&1;layer->opaque[px]=1;
                     if(layer->owner)layer->owner[px]=(uint8_t)drawing.order;
                     if(pixels)++*pixels;
                 }
@@ -1026,6 +2046,7 @@ void draw_actors(const GVDPSpriteLayer *layer){
             continue;
         }
         double left=drawing.root.x+(art.x-cache.root.x)*ratio+layer->offset;
+        if(shift!=0)left+=shift;
         double top=drawing.root.y+(art.y-cache.root.y)*ratio;
         int y=(int)std::floor((layer->line+.5-top)/ratio);if(y<0||y>=art.height)continue;
         int begin=std::max(std::max(0,left_edge()+layer->offset),(int)std::ceil(left-.5));
@@ -1034,16 +2055,23 @@ void draw_actors(const GVDPSpriteLayer *layer){
             if(layer->opaque[x]&&(!layer->owner||layer->owner[x]<=drawing.order))continue;
             int u=(int)std::floor((x+.5-left)/ratio);if(u<0||u>=art.width)continue;
             size_t at=(size_t)y*art.width+u;if(!art.opaque[at])continue;
-            layer->index[x]=art.index[at];layer->high[x]=art.high[at];layer->opaque[x]=1;
+            uint8_t shown=art.index[at];
+            if(look&&(shown>>4)==2){unsigned role=canvas_roles(art)->roles[at];
+                if(role){unsigned slot=(*look)[(role-1)*16+(shown&15)];if(slot){shown=(uint8_t)(GVDP_HOST_PALETTE_BASE+slot-1);}}}
+            layer->index[x]=shown;layer->high[x]=art.high[at];layer->opaque[x]=1;
             if(layer->owner)layer->owner[x]=(uint8_t)drawing.order;
             if(pixels)++*pixels;
         }
     }
 }
 
-void draw_objects(void*,const GVDP*,const GVDPSpriteLayer *layer){
+void draw_objects(void*,const GVDP *v,const GVDPSpriteLayer *layer){
+    if(rival_identity&&!(v->reg[12]&8)){   // D036: identity does not depend on the geometry scene (start fade, pause, mirrors)
+        if(identity_slots_tick!=tick)identity_build(v);
+        if(!active||!row_inside(layer->line)){identity_palette(v);recolor_native(layer);}
+    }
     if(!organic||!active||!row_inside(layer->line))return;
-    draw_actors(layer);
+    draw_actors(layer,v);
     for(const auto& b:billboards){
         int ax=(b.flags&0x8000)?b.art->width-b.art->anchor_x:b.art->anchor_x;
         int ay=(b.flags&0x4000)?b.art->height-b.art->anchor_y:b.art->anchor_y;
@@ -1161,7 +2189,25 @@ void prepare(const GVDP *v,unsigned sat){
             player_slots[slot]=job.projection.player||(!view_id&&game_index>=0&&
                 job.address==player_jobs[game_index]&&std::abs(job.scale-1.)<1e-9);
         }
+        // Prototype 03: the player's rider+bike assembly (RR1 forward view only).
+        if((pose_player||pose_dissolving||player_jobs_trace)&&organic&&!view_id&&game_index==0&&job.projection.player){
+            if(player_jobs_trace)std::fprintf(player_jobs_trace,"%llu,%06X,%u,%04X,%u,%.1f,%.1f,%.4f,%d,%u,%u,%u,%llu,%02X%02X\n",
+                (unsigned long long)tick,job.address,job.image,job.flags,job.second,x,job.y,job.scale,job.first,
+                (unsigned)job.pieces.size(),job.projection.components,job.projection.component,
+                (unsigned long long)job.serial,job.pieces[0].sat[4],job.pieces[0].sat[5]);
+            if(pose_dissolving&&job.projection.components==1&&std::abs(job.scale-1.)<1e-9&&track_player_dissolve(v,job,x)){
+                actor_drawings.push_back({&player_cache,Pose{x,job.y,1.},1.,(unsigned)job.first+1,false,job.clip,(uint32_t)view.player});
+                actor_drawings.back().morph=&player_cache.dissolve.part;
+                for(size_t n=0;n<job.pieces.size();++n){replaced[job.first+n]=true;native_slots[job.first+n]=false;}
+            }
+            else if(pose_player&&job.projection.components==1&&std::abs(job.scale-1.)<1e-9&&track_player(v,job,x)){
+                actor_drawings.push_back({&player_cache,Pose{x,job.y,1.},1.,(unsigned)job.first+1,false,job.clip,(uint32_t)view.player});
+                actor_drawings.back().morph=&player_cache.morph.part;++pose_ease_frames;
+                for(size_t n=0;n<job.pieces.size();++n){replaced[job.first+n]=true;native_slots[job.first+n]=false;}
+            }
+        }
     }
+    native_sat=sat;
     if(organic){
         std::map<uint32_t,std::vector<const Job*>> complete;
         for(auto& item:actor_groups){
@@ -1188,6 +2234,7 @@ void prepare(const GVDP *v,unsigned sat){
                 if(!compose_actor(v,jobs,root,canvas,&cache,source?packet:nullptr,&parts))continue;
                 cache.canvas=std::move(canvas);cache.root=root;cache.root_key=primary.key;cache.full_source=source;
                 cache.parts=std::move(parts);
+                commit_pose(cache,canonical?packet:nullptr);
                 cache.has_motion=canonical;
                 if(canonical)source_motion(cache,*packet);
                 if(source)++actor_source_assemblies;
@@ -1203,7 +2250,8 @@ void prepare(const GVDP *v,unsigned sat){
             if(cache.epoch!=packet.epoch){
                 const auto& p=packet.parts[0];Pose root{p.x,p.y,p.scale};ActorCanvas canvas;
                 std::vector<ActorArt> parts;
-                if(compose_actor(v,{},root,canvas,&cache,&packet,&parts)){cache.canvas=std::move(canvas);cache.parts=std::move(parts);cache.root=root;cache.full_source=true;cache.has_motion=true;++actor_source_only;}
+                if(compose_actor(v,{},root,canvas,&cache,&packet,&parts)){cache.canvas=std::move(canvas);cache.parts=std::move(parts);cache.root=root;cache.full_source=true;cache.has_motion=true;++actor_source_only;
+                    commit_pose(cache,&packet);}
                 cache.epoch=packet.epoch;
             }
             cache.seen=tick;
@@ -1279,6 +2327,58 @@ void prepare(const GVDP *v,unsigned sat){
                     if(ratio>0&&ratio<4096){
                         actor_drawings.push_back({&cache,root,ratio,cache.first+1,held,clip,it->first});
                         ++actor_canvas_frames;if(held)++actor_hold_frames;
+                        if(pose_easing&&cache.ease.active){
+                            // The residual belongs to a rigid rider only. A
+                            // crash or unknown projection ends it immediately.
+                            double share=cache.focal>0?pose_ease_factor(cache.ease,tick):0;
+                            if(share>0){
+                                auto& drawing=actor_drawings.back();
+                                drawing.row_offset=cache.ease.offset*share*root.scale;drawing.row_slope=cache.ease.slope*share;
+                                ++pose_ease_frames;
+                                if(pose_trace)std::fprintf(pose_trace,"%llu,%06X,%llu,%u,%.4f,%.4f,%.5f,%.5f,%.5f,0\n",
+                                    (unsigned long long)tick,it->first,(unsigned long long)cache.epoch,cache.ease.image,
+                                    cache.ease.duration,share,drawing.row_offset,drawing.row_slope,root.scale);
+                            }else cache.ease.active=false;
+                        }
+                        if(pose_morphing&&cache.morph.active){
+                            // Rigid riders only; far specks keep the native swap.
+                            if(cache.focal>0&&build_morph(cache)){
+                                if(root.scale>=.2){
+                                    actor_drawings.back().morph=&cache.morph.part;++pose_ease_frames;
+                                    if(pose_trace){const auto& m=cache.morph;
+                                        std::fprintf(pose_trace,"%llu,%06X,%llu,%u,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f\n",
+                                            (unsigned long long)tick,it->first,(unsigned long long)cache.epoch,m.to.image,m.duration,
+                                            1.-pose_curve(pose_progress(m,tick)),pose_distance(m.start,m.to.shape)*root.scale,0.,root.scale,
+                                            std::abs(m.start.height-m.to.shape.height)*root.scale);}
+                                }
+                            }else cache.morph.active=false;
+                        }
+                        if(pose_following&&cache.morph.active){
+                            // Prototype 03. Rigid riders only; far specks keep the native swap.
+                            Pose source=cache.root;
+                            if(cache.focal>0&&root.scale>=.2&&build_follow(cache.morph,source)){
+                                actor_drawings.back().morph=&cache.morph.part;++pose_ease_frames;
+                                if(pose_trace){const auto& m=cache.morph;double box[4];
+                                    Pose at{root.x,root.y,root.scale};follow_box(m,at,box);
+                                    double gap=pose_gap(m.shown,m.to.shape);
+                                    std::fprintf(pose_trace,"%llu,%06X,%llu,%u,%.4f,%.4f,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.2f\n",
+                                        (unsigned long long)tick,it->first,(unsigned long long)cache.epoch,m.to.image,m.omega,gap,
+                                        gap*root.scale,0.,root.scale,std::abs(m.shown.height-m.to.shape.height)*root.scale,
+                                        box[0],box[1],box[2],box[3]);}
+                            }else if(!cache.morph.active||cache.focal<=0)cache.morph.active=false;
+                        }
+                        if(pose_dissolving&&cache.dissolve.active){
+                            // Rigid riders only; far specks keep the native swap.
+                            if(cache.focal>0&&root.scale>=.2&&build_dissolve(cache.dissolve,cache.root,it->first,false))
+                                actor_drawings.back().morph=&cache.dissolve.part;
+                        }
+                        if(hull_trace&&(pose_morphing||pose_following)&&cache.morph.known&&cache.focal>0&&root.scale>=.5){
+                            const auto& m=cache.morph;PoseShape shown=m.to.shape;
+                            if(pose_following&&m.active)shown=m.shown;
+                            else if(pose_morphing&&m.active&&tick>=m.begin)
+                                shown=pose_between(m.start,m.to.shape,pose_curve(std::min(1.,pose_progress(m,tick))));
+                            trace_hull(it->first,root.scale,m.to.shape,shown);
+                        }
                         const SourcePacket *observed=fresh?&sources->second.back():nullptr;
                         if(traffic_trace)std::fprintf(traffic_trace,"%llu,%d,%06X,%llu,%llu,%d,%.7f,%.7f,%.7f,%.4f,%.4f,%d,%d,%.4f,%.4f,%.4f,%.4f,%u,%llu,%.7f,%.4f,%.4f,%.7f,%.7f,%.4f,%.7f,%.4f,%d,%d,%.5f,%.5f,%.5f,%d,%d,%d,%d,%.5f\n",
                             (unsigned long long)tick,v->scanline,it->first,(unsigned long long)cache.epoch,
@@ -1324,22 +2424,40 @@ void prepare(const GVDP *v,unsigned sat){
         }
         std::stable_sort(billboards.begin(),billboards.end(),[](const Billboard& a,const Billboard& b){return a.z<b.z;});
     }
+    if(rival_identity&&!(v->reg[12]&8))identity_build(v);   // D033: before coverage, which needs the rival palette blocks
     if(coverage_enabled)build_coverage();
 }
 
 void build_coverage(){
     coverage_sprites.clear();
     for(const auto& drawing:actor_drawings){const auto& cache=*drawing.cache;const auto& art=cache.canvas;double ratio=drawing.ratio;
-        if(arcade_motion()&&!cache.parts.empty()&&(!cache.focal||
-           coverage_enabled||(drawing.root.scale>=.25&&art.height*ratio>=16&&art.width*ratio>=8))){
-            for(const auto& p:cache.parts){const auto& image=*p.art;const auto& source=p.source;
+        size_t first=coverage_sprites.size();
+        const ActorArt *part=drawing.morph?drawing.morph:cache.parts.data();
+        const size_t part_count=drawing.morph?1:cache.parts.size();
+        if(drawing.morph||(arcade_motion()&&!cache.parts.empty()&&(!cache.focal||
+           coverage_enabled||(drawing.root.scale>=.25&&art.height*ratio>=16&&art.width*ratio>=8)))){
+            for(size_t part_index=0;part_index<part_count;++part_index){const auto& p=part[part_index];
+                const auto& image=*p.art;const auto& source=p.source;
                 double scale=source.scale*ratio,x=drawing.root.x+(source.x-cache.root.x)*ratio,y=drawing.root.y+(source.y-cache.root.y)*ratio;
                 bool hf=(p.attr&0x0800)!=0,vf=(p.attr&0x1000)!=0;
                 int ax=hf?image.width-image.anchor_x:image.anchor_x,ay=vf?image.height-image.anchor_y:image.anchor_y;
-                coverage_sprites.push_back({&image.coverage,x-ax*scale,y-ay*scale,scale,drawing.clip,p.base,drawing.order,hf,vf,(p.attr>>15)!=0,false,false});
+                const rr::CoverageImage *shown=&image.coverage;unsigned base=p.base;
+                auto block=identity_blocks.find(drawing.actor);   // D033: rival helmet/vest colours (line 2 only)
+                if(block!=identity_blocks.end()&&p.base==32){
+                    shown=&image_roles(image)->coded;base=COVERAGE_BLOCK_BASE+block->second*COVERAGE_BLOCK_SIZE;}
+                coverage_sprites.push_back({shown,x-ax*scale,y-ay*scale,scale,drawing.clip,base,drawing.order,hf,vf,(p.attr>>15)!=0,false,false});
             }
-        }else coverage_sprites.push_back({&art.coverage,drawing.root.x+(art.x-cache.root.x)*ratio,
-            drawing.root.y+(art.y-cache.root.y)*ratio,ratio,drawing.clip,0,drawing.order,false,false,true,true,false});
+        }else{
+            const rr::CoverageImage *shown=&art.coverage;unsigned base=0;
+            auto block=identity_blocks.find(drawing.actor);
+            if(block!=identity_blocks.end()){shown=&canvas_roles(art)->coded;base=COVERAGE_BLOCK_BASE+block->second*COVERAGE_BLOCK_SIZE;}
+            coverage_sprites.push_back({shown,drawing.root.x+(art.x-cache.root.x)*ratio,
+                drawing.root.y+(art.y-cache.root.y)*ratio,ratio,drawing.clip,base,drawing.order,false,false,true,true,false});
+        }
+        if(drawing.row_offset!=0||drawing.row_slope!=0)for(size_t n=first;n<coverage_sprites.size();++n){
+            coverage_sprites[n].row_offset=drawing.row_offset;coverage_sprites[n].row_slope=drawing.row_slope;
+            coverage_sprites[n].row_origin=drawing.root.y;
+        }
     }
     for(const auto& b:billboards){
         bool hf=(b.flags&0x8000)!=0,vf=(b.flags&0x4000)!=0;
@@ -1353,10 +2471,11 @@ void cover(const GVDP *v,const GVDPVisualAuditRow *row){
     coverage_line=-1;
     if(!coverage_enabled||!active||!row_inside(row->line)||!row->background_index||
        !(v->reg[1]&0x40)||(v->reg[12]&8)||(v->reg[12]&6)==6)return;
-    std::array<uint32_t,256> palette;
+    std::array<uint32_t,2048> palette;palette.fill(0xff000000);
     for(unsigned i=0;i<192;++i)palette[i]=genesis_dac_cram_to_argb(v->cram[i&63],(int)(i/64));
     palette[192]=0xff000000;const uint32_t *host=gvdp_host_palette();
     for(unsigned i=193;i<256;++i)palette[i]=host?host[i-193]:0xff000000;
+    if(!identity_block_looks.empty())identity_blocks_fill(v,palette.data());
     int left=std::max(0,left_edge()+row->offset),right=std::min(row->total,right_edge()+row->offset);
     // Shapes use native coordinates; the backing raster includes wide margins.
     auto sprites=coverage_sprites;for(auto& s:sprites)s.left+=row->offset;
@@ -1686,6 +2805,8 @@ int scroll_geometry(void*,const GVDP *v,int line,int *values){
 
 void rr_geometry_reset(){
     coverage_line=-1;coverage_frame=UINT64_MAX;coverage_sprites.clear();coverage_mask.fill(0);
+    for(const auto& job:pending)if(job.projection.actor&&!job.projection.player){id_archive.push_back(job);}   // D038: keep rival jobs for SAT ownership across the reset
+    while(id_archive.size()>160)id_archive.pop_front();
     pending.clear();histories.clear();building_valid=false;cached_tick=UINT64_MAX;cached_line=-1;
     for(auto& item:bounds)item.valid=false;
     for(auto& item:scrolls)item.valid=false;
@@ -1725,6 +2846,63 @@ void rr_geometry_frame(uint64_t frame,int scene){
             std::fputs("frame,line,x,kind,native,presented,native_owner,owner\n",audit_trace);
         if(enabled)std::fprintf(stderr,"[RR GEOMETRY] object geometry enabled; guest status uses authentic SAT\n");
     }
+    // D033: RR1 rival identity (helmet/vest per rider). Experimental switch; RR_RIVAL_IDENTITY=1.
+    {const char *value=std::getenv("RR_RIVAL_IDENTITY");
+        rival_identity=organic&&(game_index==0||game_index==1||game_index==2)&&!view_id&&value&&value[0]=='1'&&!value[1];}   // D040/D044: RR1 + RR2 + RR3
+    // 0.70 Motorcycle Motion: independent of RR_GEOMETRY's own behaviour, but
+    // it lives in this presentation layer. Absent/0 = classic 0.60 output.
+    // Prototype scope: RR1 rivals in the single forward view only.
+    {const char *value=std::getenv("RR_MOTORCYCLE_MOTION");
+        pose_easing=organic&&game_index==0&&!view_id&&value&&value[0]=='1'&&!value[1];
+        // 2 = prototype 02: reconstructed in-between frames (silhouette morph).
+        // 4 = enhanced (the shipped option): prototype 02 for rivals + prototype 03 follower for the player.
+        bool hybrid=organic&&game_index==0&&!view_id&&value&&value[0]=='4'&&!value[1];
+        pose_morphing=hybrid||(organic&&game_index==0&&!view_id&&value&&value[0]=='2'&&!value[1]);
+        if(pose_morphing){const char *frames=std::getenv("RR_MOTORCYCLE_MOTION_FRAMES");
+            pose_morph_frames=frames&&*frames?std::clamp(std::atof(frames),4.,24.):10.;}
+        // 3 = prototype 03: velocity-continuous hull follower, rivals AND the player.
+        pose_following=organic&&game_index==0&&!view_id&&value&&value[0]=='3'&&!value[1];
+        if((pose_following||hybrid)&&!pose_easing_logged){
+            auto read=[](const char *name,double fallback){const char *text=std::getenv(name);
+                return text&&*text?std::clamp(std::atof(text),.25,2.):fallback;};
+            pose_follow_rival=read("RR_MOTORCYCLE_MOTION_FOLLOW",.45);
+            pose_follow_player=read("RR_MOTORCYCLE_MOTION_FOLLOW_PLAYER",.7);
+            const char *player=std::getenv("RR_MOTORCYCLE_MOTION_PLAYER");
+            pose_player=!(player&&player[0]=='0');
+            // Diagnostic: always draw the player's ROM art through the in-between renderer.
+            const char *force=std::getenv("RR_MOTORCYCLE_MOTION_FORCE");
+            pose_player_force=pose_player&&force&&force[0]=='1';
+        }
+        // 6 = prototype 04: temporal pixel dissolve between the two native ROM images
+        // (rivals and player). Independent of 1-4; never combined with them.
+        pose_dissolving=organic&&game_index==0&&!view_id&&value&&value[0]=='6'&&!value[1];
+        if((pose_easing||pose_morphing||pose_following||pose_dissolving)&&!pose_easing_logged){pose_easing_logged=true;
+            if(pose_dissolving){
+                std::fprintf(stderr,"[RR MOTORCYCLE MOTION] temporal pixel dissolve enabled (RR1 prototype 04, <=3 frames, Bayer 4x4)\n");
+                if(const char *path=trace_path("RR_DISSOLVE_TRACE"))if((dissolve_trace=std::fopen(path,"wb")))
+                    std::fputs("frame,kind,actor,from_id,to_id,k,frames,threshold,share\n",dissolve_trace);
+            }
+            else if(hybrid)std::fprintf(stderr,"[RR MOTORCYCLE MOTION] enhanced: rivals prototype 02 + player follower (prototype 03), w=%.2f\n",pose_follow_player);
+            else if(pose_following)std::fprintf(stderr,"[RR MOTORCYCLE MOTION] velocity-continuous in-between frames enabled (RR1 prototype 03, rivals%s, w=%.2f/%.2f)\n",
+                pose_player?"+player":"",pose_follow_rival,pose_follow_player);
+            else std::fprintf(stderr,pose_morphing?"[RR MOTORCYCLE MOTION] rival in-between frames enabled (RR1 prototype 02, %.0f frames)\n":
+                "[RR MOTORCYCLE MOTION] enhanced rival pose easing enabled (RR1 prototype)\n",pose_morph_frames);
+            if(const char *path=trace_path("RR_POSE_EASE_TRACE"))if((pose_trace=std::fopen(path,"wb")))
+                std::fputs(pose_following?"frame,actor,epoch,image,duration,share,row_offset,row_slope,scale,reach_y,box_left,box_top,box_right,box_bottom\n":
+                    "frame,actor,epoch,image,duration,share,row_offset,row_slope,scale,reach_y\n",pose_trace);
+            if(pose_player){
+                if(const char *path=trace_path("RR_POSE_PLAYER_TRACE"))if((player_trace=std::fopen(path,"wb")))
+                    std::fputs("frame,actor,epoch,image,duration,share,row_offset,row_slope,scale,reach_y,box_left,box_top,box_right,box_bottom\n",player_trace);
+            }
+            if(const char *limit=std::getenv("RR_MOTORCYCLE_MOTION_LIMB"))if(*limit)pose_limb_peak=std::clamp(std::atof(limit),4.,999.);
+            if(const char *limit=std::getenv("RR_MOTORCYCLE_MOTION_LIMB_RIVAL"))if(*limit)pose_limb_peak_rival=std::clamp(std::atof(limit),4.,999.);
+            if(const char *path=trace_path("RR_POSE_COMMIT_TRACE"))if((commit_trace=std::fopen(path,"wb")))
+                std::fputs("frame,kind,from_image,to_image,reach,peak,median,kink,limb,dh,from_height,to_height\n",commit_trace);
+            if(const char *path=trace_path("RR_POSE_HULL_TRACE"))if((hull_trace=std::fopen(path,"wb")))
+                std::fputs("frame,actor,scale,native_height,shown_height,n_l10,n_r10,n_l32,n_r32,n_l54,n_r54,s_l10,s_r10,s_l32,s_r32,s_l54,s_r54\n",hull_trace);
+            if(const char *path=trace_path("RR_PLAYER_JOBS_TRACE"))if((player_jobs_trace=std::fopen(path,"wb")))
+                std::fputs("frame,address,image,flags,second,x,y,scale,first,pieces,components,component,serial,attr\n",player_jobs_trace);
+        }}
     flush_vehicle_pixels();
     if(organic&&active)fit_lanes();
     tick=frame;++frames;
@@ -1948,7 +3126,8 @@ extern "C" void rr_geometry_frame(uint64_t frame,int scene){
     bool paused=(scene==2||scene==4)&&wide&&*wide=='1';
     gvdp_set_visual_sprites(active?dispatch_geometry:nullptr,nullptr);
     gvdp_set_visual_scroll(active?dispatch_scroll:paused?dispatch_paused:nullptr,nullptr);
-    gvdp_set_visual_objects(active&&view.organic?dispatch_objects:nullptr,nullptr);
+    bool identity_hook=!layout&&views[0].enabled&&views[0].organic&&views[0].rival_identity;   // D036
+    gvdp_set_visual_objects((active&&view.organic)||identity_hook?dispatch_objects:nullptr,nullptr);
     gvdp_set_visual_surface(active&&view.organic?dispatch_surface:nullptr,nullptr);
     gvdp_set_visual_audit(active&&(view.audit_trace||(coverage_enabled&&view.organic))?dispatch_audit:nullptr,nullptr);
     gvdp_set_visual_viewport(layout?dispatch_viewport:nullptr,nullptr);

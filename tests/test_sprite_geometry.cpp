@@ -14,6 +14,7 @@ extern "C" void gvdp_set_visual_sprites(GVDPVisualSprite fn,void*){sprites=fn;}
 extern "C" void gvdp_set_visual_scroll(GVDPVisualScroll fn,void*){scroll=fn;}
 extern "C" void gvdp_set_visual_objects(GVDPHostSprites,void*){}
 extern "C" void gvdp_set_visual_surface(GVDPVisualSurface,void*){}
+extern "C" int gvdp_set_host_palette(const uint32_t*,unsigned){return 1;}
 extern "C" void gvdp_set_visual_audit(GVDPVisualAudit,void*){}
 extern "C" void gvdp_set_visual_viewport(GVDPVisualViewport,void*){}
 extern "C" const uint8_t *gvdp_sprite_patterns(unsigned,unsigned *bytes){*bytes=0;return nullptr;}

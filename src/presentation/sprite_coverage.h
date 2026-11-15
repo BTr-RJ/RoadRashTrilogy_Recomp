@@ -20,6 +20,12 @@ struct CoverageSprite {
     double left=0,top=0,scale=1,clip=0;
     unsigned base=0,order=81;
     bool flip_x=false,flip_y=false,priority=true,per_pixel_priority=false,crisp=false;
+    // Optional horizontal displacement of whole destination rows (0.70 pose
+    // easing). Zero leaves every row exactly where `left` places it.
+    double row_offset=0,row_slope=0,row_origin=0;
+    double row_left(int line) const {
+        return row_offset==0&&row_slope==0?left:left+row_offset+row_slope*(row_origin-(line+.5));
+    }
 };
 void resolve_sprite_row(int line,int left,int right,const uint8_t *background,
     const uint8_t *owner,const uint8_t *plane_high,const uint32_t *palette,
