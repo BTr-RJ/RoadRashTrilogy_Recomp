@@ -38,6 +38,7 @@ def is_public_path(relative):
     if name=='patches/runtime-integration.patch':return True
     if len(parts)==2 and parts[0]=='docs':return parts[1] in PUBLIC_DOCS
     if parts[:2]==('docs','licenses'):return relative.suffix.lower() in ('.md','.txt')
+    if name=='docs/media/kofi-support-small.jpg':return True
     if parts[:2]==('docs','media') and len(parts)==4 and re.fullmatch(r'[0-9]+\.[0-9]+',parts[2]):   # release comparison media of any published version
         return parts[3] in ('comparison.json',f'rr1-original-vs-zoom-{parts[2]}.gif',
                             f'rr2-original-vs-zoom-{parts[2]}.gif',f'rr3-original-vs-zoom-{parts[2]}.gif')
