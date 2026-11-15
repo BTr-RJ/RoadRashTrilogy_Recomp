@@ -16,12 +16,12 @@ PUBLIC_TOOLS=('apply_runtime_patches.py','audit_release.py','audit_repository.py
               'patch_controls.py','patch_codegen.py','patch_campaign_states.py','patch_engine.py','patch_presentation.py',
               'patch_raster.py','patch_raster_timing.py','patch_sprite_geometry.py',
               'prepare_runtime_inputs.py','public-tools.lock.json','rr.py','tools.lock.json')
-PUBLIC_DOCS=('BUILDING.md','CONTROLS.md','INSTALLATION.md','RELEASE-0.50.md','RELEASE-0.60.md','VIDEO.md','ROADMAP.md')
+PUBLIC_DOCS=('BUILDING.md','CONTROLS.md','INSTALLATION.md','RELEASE-0.50.md','RELEASE-0.60.md','RELEASE-0.70.md','VIDEO.md','ROADMAP.md')
 PUBLIC_ASSETS=('BARLOW-LICENSE.txt','Barlow-Regular.ttf','BarlowCondensed-Bold.ttf',
                'BarlowCondensed-BoldItalic.ttf','FONT-LICENSE.txt','app.ico',
                'brand-050.png','rr1.png','rr2.png','rr3.png','sources.json')
 SOURCE_TYPES={'src':{'.c','.cpp','.h','.hpp','.in','.manifest'},
-              'games':{'.json','.toml'},'tests':{'.py','.c','.cpp','.h','.hpp'},
+              'games':{'.json','.toml'},'tests':{'.py','.c','.cpp','.h','.hpp','.ps1'},
               'music':{'.md','.json'},'.github':{'.md','.yml','.yaml'}}
 FORBIDDEN={'.local','.tools','build','dist','.git','__pycache__'}
 AUDIO_EXTENSIONS={'.m4a','.mp3','.wav','.aac','.ogg','.flac'}
@@ -34,13 +34,13 @@ def is_public_path(relative):
     if parts[:2]==('music','dean-harris'):return False
     if name in TOP_FILES:return True
     if len(parts)==2 and parts[0]=='tools':return parts[1] in PUBLIC_TOOLS
-    if len(parts)==2 and parts[0]=='scripts':return parts[1] in ('build.ps1','install.ps1')
+    if len(parts)==2 and parts[0]=='scripts':return parts[1] in ('build.ps1','install.ps1','msvc-toolchain.ps1')
     if name=='patches/runtime-integration.patch':return True
     if len(parts)==2 and parts[0]=='docs':return parts[1] in PUBLIC_DOCS
     if parts[:2]==('docs','licenses'):return relative.suffix.lower() in ('.md','.txt')
-    if parts[:3]==('docs','media',VERSION) and len(parts)==4:
-        return parts[3] in ('comparison.json',f'rr1-original-vs-zoom-{VERSION}.gif',
-                            f'rr2-original-vs-zoom-{VERSION}.gif',f'rr3-original-vs-zoom-{VERSION}.gif')
+    if parts[:2]==('docs','media') and len(parts)==4 and re.fullmatch(r'[0-9]+\.[0-9]+',parts[2]):   # release comparison media of any published version
+        return parts[3] in ('comparison.json',f'rr1-original-vs-zoom-{parts[2]}.gif',
+                            f'rr2-original-vs-zoom-{parts[2]}.gif',f'rr3-original-vs-zoom-{parts[2]}.gif')
     if len(parts)==3 and parts[:2]==('assets','launcher'):return parts[2] in PUBLIC_ASSETS
     return relative.suffix.lower() in SOURCE_TYPES.get(parts[0],set())
 

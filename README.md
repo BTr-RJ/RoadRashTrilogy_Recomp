@@ -1,23 +1,23 @@
 # Road Rash Trilogy Recomp
 
 A native Windows x64 fan project for **Road Rash, Road Rash II and Road Rash 3**
-from the Mega Drive / Genesis. Version **0.60** improves sprite approach and hill
-placement, adds presentation enhancements to original local split screen, and
-includes campaign checkpoints and looping remake music. The English installer
-builds the games locally from your own ROMs.
+from the Mega Drive / Genesis. Version **0.70** adds individual rival identity (helmet, vest and suit colors) to
+all three games, an optional enhanced motorcycle-motion presentation in Road Rash 1,
+and a hardened installer build environment. The English installer builds the
+games locally from your own ROMs.
 
 ![Road Rash Trilogy Recomp](assets/launcher/brand-050.png)
 
 ## Install and play
 
-**[Download version 0.60](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/tag/v0.60)**
-(Public Test, Windows x64):
+**[Download version 0.70](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/tag/v0.70)**
+(Windows x64):
 
-- [Standard installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/RoadRashTrilogyRecomp-0.60-Windows-x64.zip)
-- [Offline installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/RoadRashTrilogyRecomp-0.60-Windows-x64-offline.zip)
-- [SHA-256 checksums](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.60/SHA256SUMS.txt)
+- [Standard installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.70/RoadRashTrilogyRecomp-0.70-Windows-x64.zip)
+- [Offline installer](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.70/RoadRashTrilogyRecomp-0.70-Windows-x64-offline.zip)
+- [SHA-256 checksums](https://github.com/BTr-RJ/RoadRashTrilogy_Recomp/releases/download/v0.70/SHA256SUMS.txt)
 
-1. Extract the complete **RoadRashTrilogyRecomp-0.60-Windows-x64.zip** package.
+1. Extract the complete **RoadRashTrilogyRecomp-0.70-Windows-x64.zip** package.
 2. Open **RoadRashTrilogyRecomp.exe** and choose **Install games**.
 3. Select your ROM folder(s) and an empty installation folder.
 4. Let the installer verify your files and compile the supplied games locally.
@@ -62,7 +62,18 @@ and the HUD. The 4-second GIFs sample the 59.94 Hz capture at 50 fps, retaining
 the original elapsed time. The native panel is pixel-verified; GIF palette
 quantization approximates some fractional edge colors on the 0.60 panel. [Capture details and hashes](docs/media/0.60/comparison.json).
 
-## What changed from 0.50
+## What changed in 0.70
+
+- Individual rival identity (helmet, vest and suit colors) in Road Rash, Road Rash II
+  and Road Rash 3; police and fall poses keep the original art.
+- Optional **Enhanced** motorcycle motion for Road Rash 1 rivals (Classic stays the
+  default; your own bike, speed, physics and AI are unchanged).
+- Safer installer build environment for the MSVC compiler detection problem
+  reported in issue #2, with regression tests.
+
+See [0.70 changes and update notes](docs/RELEASE-0.70.md).
+
+## What changed from 0.50 to 0.60
 
 - Installed launchers check for updates in the background. **Updates** downloads
   a verified installer, builds separately, applies with rollback protection and

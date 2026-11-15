@@ -13,7 +13,7 @@
 #include <cwctype>
 #include "updates.h"
 #ifndef RR_VERSION
-#define RR_VERSION "0.60"
+#define RR_VERSION "0.70"
 #endif
 namespace {
 namespace fs=std::filesystem;

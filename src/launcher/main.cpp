@@ -64,6 +64,7 @@ static std::vector<HWND> buttons;
 static int output_size = 1, filter = 2, volume = 85, music_mode=1;
 static int music_volume=20,effects_volume=100;
 static bool fullscreen = false, wide_view=true, geometry=true;
+static int motion=0;   // 0 = Classic (0.60 look), 1 = Enhanced motorcycle motion (RR1)
 static const int widths[] = {960, 1280, 1920, 2560, 3840};
 static const int heights[] = {540, 720, 1080, 1440, 2160};
 static const char *screen_modes[] = {"raw", "linear", "raw", "raw", "raw", "crt", "trinitron", "composite"};
@@ -129,7 +130,7 @@ static void save_settings() {
     if(!qa_capture.empty()||!qa_ui_result.empty())return;
     auto set = [](const wchar_t *key, int value) { auto v=std::to_wstring(value); WritePrivateProfileStringW(L"launcher",key,v.c_str(),settings.c_str()); };
     set(L"game", selected); set(L"output_size",output_size); set(L"filter",filter); set(L"volume",volume); set(L"fullscreen",fullscreen);
-    set(L"wide_view",wide_view);set(L"geometry",geometry);set(L"music",music_mode);
+    set(L"wide_view",wide_view);set(L"geometry",geometry);set(L"motorcycle_motion",motion);set(L"music",music_mode);
     set(L"music_volume",music_volume);set(L"effects_volume",effects_volume);
 }
 static void select_game(int game) {
@@ -159,6 +160,8 @@ static void launch() {
     SetEnvironmentVariableA("RR_WIDE",wide_view?"1":"0");
     SetEnvironmentVariableA("RR_SMOOTH","0");
     SetEnvironmentVariableA("RR_GEOMETRY",geometry?"1":"0");
+    SetEnvironmentVariableA("RR_RIVAL_IDENTITY","1");   // 0.70: approved per-rider helmet/vest kits (needs the geometry option; police stay original)
+    SetEnvironmentVariableA("RR_MOTORCYCLE_MOTION",motion==1?"2":nullptr);   // unset = classic; 2 = rivals prototype 02, player stays 100% native (D031)
     SetEnvironmentVariableA("RR_MUSIC",music_mode?"dean-harris":"original");
     auto mv=std::to_wstring(music_volume),ev=std::to_wstring(effects_volume);
     SetEnvironmentVariableW(L"RR_MUSIC_VOLUME",mv.c_str());SetEnvironmentVariableW(L"RR_EFFECTS_VOLUME",ev.c_str());
@@ -179,7 +182,7 @@ static void launch() {
     if(log!=INVALID_HANDLE_VALUE) {
         SetHandleInformation(log,HANDLE_FLAG_INHERIT,HANDLE_FLAG_INHERIT);
         input=CreateFileW(L"NUL",GENERIC_READ,FILE_SHARE_READ|FILE_SHARE_WRITE,&inherit,OPEN_EXISTING,FILE_ATTRIBUTE_NORMAL,nullptr);
-        std::string header="Road Rash Trilogy " RR_VERSION " | exe="+utf8(executable(selected).wstring())+" | wide="+std::to_string(wide_view)+" | geometry="+std::to_string(geometry)+" | filter="+std::to_string(filter)+" | music="+std::to_string(music_volume)+" | effects="+std::to_string(effects_volume)+"\n";
+        std::string header="Road Rash Trilogy " RR_VERSION " | exe="+utf8(executable(selected).wstring())+" | wide="+std::to_string(wide_view)+" | geometry="+std::to_string(geometry)+" | motion="+std::to_string(motion)+" | filter="+std::to_string(filter)+" | music="+std::to_string(music_volume)+" | effects="+std::to_string(effects_volume)+"\n";
         DWORD written;WriteFile(log,header.data(),(DWORD)header.size(),&written,nullptr);
         if(input!=INVALID_HANDLE_VALUE){start.dwFlags|=STARTF_USESTDHANDLES;start.hStdInput=input;start.hStdOutput=start.hStdError=log;}
     }
@@ -193,7 +196,7 @@ static void launch() {
     SetEnvironmentVariableW(L"RR_RA_AUTH_FILE",nullptr);
     SetEnvironmentVariableW(L"RR_OUTPUT_WIDTH",nullptr); SetEnvironmentVariableW(L"RR_OUTPUT_HEIGHT",nullptr);
     SetEnvironmentVariableA("GENESIS_SCREEN",nullptr);
-    for(auto key:{L"RR_ROOT",L"RR_WIDE",L"RR_SMOOTH",L"RR_GEOMETRY",L"RR_MUSIC",L"RR_SHADER_PATH",L"RR_MUSIC_VOLUME",L"RR_EFFECTS_VOLUME"})SetEnvironmentVariableW(key,nullptr);
+    for(auto key:{L"RR_ROOT",L"RR_WIDE",L"RR_SMOOTH",L"RR_GEOMETRY",L"RR_RIVAL_IDENTITY",L"RR_MOTORCYCLE_MOTION",L"RR_MUSIC",L"RR_SHADER_PATH",L"RR_MUSIC_VOLUME",L"RR_EFFECTS_VOLUME"})SetEnvironmentVariableW(key,nullptr);
 }
 
 static void import_rom() {
@@ -217,6 +220,7 @@ static void import_rom() {
     InvalidateRect(window,nullptr,FALSE);
 }
 
+static HWND combo_motion;
 static HWND dialog, combo_size, combo_filter, check_full, check_wide, check_geometry, slider_volume, combo_music, username_edit, password_edit;
 static HWND slider_music,slider_effects;
 static HWND label_volume,label_music,label_effects;
@@ -253,7 +257,11 @@ static LRESULT CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
             SendMessageW(check_wide,BM_SETCHECK,wide_view?BST_CHECKED:BST_UNCHECKED,0);
             check_geometry=control(L"BUTTON",L"Continuous zoom and smooth movement",BS_AUTOCHECKBOX|WS_TABSTOP,28,260,440,28,5);
             SendMessageW(check_geometry,BM_SETCHECK,geometry?BST_CHECKED:BST_UNCHECKED,0);
-            control(L"STATIC",L"Pixel-art proportions are preserved with every filter.\nWidescreen CRT uses the complete viewport.\nSmooth zoom supports solo and split-screen races.\nMenus and paused motion keep their original timing.",0,28,310,440,90,0);
+            control(L"STATIC",L"Motorcycle motion (Road Rash 1)",0,28,296,420,22,0);
+            combo_motion=control(L"COMBOBOX",L"",CBS_DROPDOWNLIST|WS_TABSTOP,28,320,420,120,6);
+            for(auto label:{L"Classic (original look)",L"Enhanced (smoother rival lean changes)"})SendMessageW(combo_motion,CB_ADDSTRING,0,(LPARAM)label);
+            SendMessageW(combo_motion,CB_SETCURSEL,motion,0);
+            control(L"STATIC",L"Enhanced motion needs the smooth movement option above.\nYour own bike always stays original. Speed, physics and AI are never changed.\nPixel-art proportions are preserved with every filter.",0,28,362,440,60,0);
         } else if(dialog_page==1) {
             label_volume=control(L"STATIC",L"Master volume",0,28,22,420,24,0);
             slider_volume=control(TRACKBAR_CLASSW,L"",TBS_AUTOTICKS|WS_TABSTOP,28,46,420,32,10);
@@ -310,7 +318,7 @@ static LRESULT CALLBACK dialog_proc(HWND hwnd, UINT message, WPARAM wparam, LPAR
         if(LOWORD(wparam)==51){rr_ra_logout(ra);return 0;}
         if(LOWORD(wparam)==52){auto url=L"https://retroachievements.org/game/"+std::to_wstring(ra_game[selected]);ShellExecuteW(hwnd,L"open",url.c_str(),nullptr,nullptr,SW_SHOWNORMAL);return 0;}
         if(LOWORD(wparam)==IDOK && HIWORD(wparam)==BN_CLICKED) {
-            if(dialog_page==0){output_size=(int)SendMessageW(combo_size,CB_GETCURSEL,0,0);filter=(int)SendMessageW(combo_filter,CB_GETCURSEL,0,0);fullscreen=SendMessageW(check_full,BM_GETCHECK,0,0)==BST_CHECKED;wide_view=SendMessageW(check_wide,BM_GETCHECK,0,0)==BST_CHECKED;geometry=SendMessageW(check_geometry,BM_GETCHECK,0,0)==BST_CHECKED;}
+            if(dialog_page==0){output_size=(int)SendMessageW(combo_size,CB_GETCURSEL,0,0);filter=(int)SendMessageW(combo_filter,CB_GETCURSEL,0,0);fullscreen=SendMessageW(check_full,BM_GETCHECK,0,0)==BST_CHECKED;wide_view=SendMessageW(check_wide,BM_GETCHECK,0,0)==BST_CHECKED;geometry=SendMessageW(check_geometry,BM_GETCHECK,0,0)==BST_CHECKED;motion=std::clamp((int)SendMessageW(combo_motion,CB_GETCURSEL,0,0),0,1);}
             if(dialog_page==1){volume=(int)SendMessageW(slider_volume,TBM_GETPOS,0,0);music_mode=(int)SendMessageW(combo_music,CB_GETCURSEL,0,0);music_volume=(int)SendMessageW(slider_music,TBM_GETPOS,0,0);effects_volume=(int)SendMessageW(slider_effects,TBM_GETPOS,0,0);}
             save_settings();DestroyWindow(hwnd);return 0;
         }break;
@@ -395,7 +403,7 @@ static void render(HWND hwnd,HDC dc) {
     std::wstring ra_state=L"Local achievements / F6 in game\nYour progress stays on this PC.";
     text(g,ra_state.c_str(),952,609,284,48,15,muted);
     text(g,L"Arrow keys / D-pad: choose     Enter / A: play",42,128,1000,20,14,muted);
-    text(g,L"v0.60 / Windows x64",1040,762,200,22,14,muted);
+    text(g,L"v" RR_VERSION L" / Windows x64",1040,762,200,22,14,muted);
     Graphics screen(dc);screen.DrawImage(&buffer,0,0);
 }
 static void paint(HWND hwnd){PAINTSTRUCT ps;auto dc=BeginPaint(hwnd,&ps);render(hwnd,dc);EndPaint(hwnd,&ps);}
@@ -470,7 +478,7 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     if(!fs::exists(assets/L"rr1.png")) { MessageBoxW(nullptr,L"Launcher artwork is missing. Extract the complete release package before opening the app.",L"Missing files",MB_OK|MB_ICONERROR);return 1; }
     fs::create_directories(root/L".local");settings=root/L".local/launcher.ini";
     selected=std::clamp(ini_int(L"game",0),0,2);output_size=std::clamp(ini_int(L"output_size",1),0,4);filter=std::clamp(ini_int(L"filter",2),0,7);volume=std::clamp(ini_int(L"volume",85),0,100);fullscreen=ini_int(L"fullscreen",0)!=0;
-    wide_view=ini_int(L"wide_view",1)!=0;geometry=ini_int(L"geometry",1)!=0;
+    wide_view=ini_int(L"wide_view",1)!=0;geometry=ini_int(L"geometry",1)!=0;motion=std::clamp(ini_int(L"motorcycle_motion",0),0,1);
     bool has_remakes=fs::exists(root/L".local/music/dean-harris/rr1.tsv")||fs::exists(root/L"music/dean-harris/rr1.tsv");
     music_mode=std::clamp(ini_int(L"music",has_remakes?1:0),0,1);
     music_volume=std::clamp(ini_int(L"music_volume",20),0,100);effects_volume=std::clamp(ini_int(L"effects_volume",100),0,200);
@@ -503,7 +511,7 @@ int WINAPI wWinMain(HINSTANCE app,HINSTANCE,LPWSTR args,int show) {
     RECT work;SystemParametersInfoW(SPI_GETWORKAREA,0,&work,0);
     int initial_w=std::min((LONG)(1300*dpi_scale),work.right-work.left),initial_h=std::min((LONG)(850*dpi_scale),work.bottom-work.top);
     if(qa_width>=920&&qa_height>=600){initial_w=qa_width;initial_h=qa_height;}
-    HWND hwnd=CreateWindowExW(qa?WS_EX_NOACTIVATE:0,klass.lpszClassName,L"Road Rash Trilogy Recomp - 0.60",WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-initial_w)/2,work.top+(work.bottom-work.top-initial_h)/2,initial_w,initial_h,nullptr,nullptr,app,nullptr);
+    HWND hwnd=CreateWindowExW(qa?WS_EX_NOACTIVATE:0,klass.lpszClassName,L"Road Rash Trilogy Recomp - " RR_VERSION,WS_OVERLAPPEDWINDOW|WS_CLIPCHILDREN,work.left+(work.right-work.left-initial_w)/2,work.top+(work.bottom-work.top-initial_h)/2,initial_w,initial_h,nullptr,nullptr,app,nullptr);
     ShowWindow(hwnd,qa?SW_SHOWNOACTIVATE:show);UpdateWindow(hwnd);
     rr_updates_startup(hwnd);
     if(!qa_capture.empty()){if(qa_page==L"controls")rr_controls_show(hwnd);else if(qa_page==L"install")rr_install_show(hwnd);else if(qa_page==L"updates")rr_updates_show(hwnd);else if(qa_page==L"video")show_dialog(0);else if(qa_page==L"audio")show_dialog(1);else if(qa_page==L"achievements")show_dialog(2);}

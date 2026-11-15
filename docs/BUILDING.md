@@ -24,7 +24,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build.ps1 -BuildFold
 
 Only games with private verified manifests are built. `-Target TrilogyLauncher`
 rebuilds just the launcher. CMake, the native resource version and the package
-tool use version **0.60**. Dependencies and hashes live in
+tool use version **0.70**. Dependencies and hashes live in
 `tools/public-tools.lock.json`. Runtime fixes are reproducible patch scripts;
 `patches/runtime-integration.patch` is a reviewable generated diff against the
 pinned SDK source. Never edit generated game C.
@@ -36,7 +36,7 @@ pinned SDK source. Never edit generated game C.
 ```
 
 The destination must be fresh. This creates source, standard installer and
-offline installer ZIPs under `dist/0.60`, with per-package file manifests and
+offline installer ZIPs under `dist/0.70`, with per-package file manifests and
 SHA256SUMS. The package tool uses an allowlist and rejects ROMs, private folders
 and unexpected binaries. The only prebuilt application is the ROM-independent
 launcher and its SDL2 DLL. Public SDK caches appear only in the offline package.
@@ -77,7 +77,7 @@ capture scripts are maintained outside the public tree.
 ```powershell
 python tools/audit_repository.py
 python tools/package_release.py --source-only --output build/public-source-check
-python tools/audit_repository.py --package --root build/public-source-check/RoadRashTrilogyRecomp-0.60-source
+python tools/audit_repository.py --package --root build/public-source-check/RoadRashTrilogyRecomp-0.70-source
 ```
 
 The repository and package share an explicit file policy in
@@ -85,3 +85,11 @@ The repository and package share an explicit file policy in
 that policy and its regression tests together. CI checks both the tracked tree
 and the generated source package. Keep local development notes out of commits
 and distributable packages.
+
+
+## Toolchain check and compiler detection (0.70)
+`scripts/build.ps1` validates the Microsoft toolchain before configuring: it builds and links one C and one C++ probe
+program (`.local/toolchain-probe`) and requires `CMAKE_C_COMPILER_ID` and `CMAKE_CXX_COMPILER_ID` to be `MSVC`.
+Variables that change compiler behaviour (`CL`, `_CL_`, `LINK`, `CC`, `CXX`, `CFLAGS`, `CXXFLAGS`, `LIB`, `INCLUDE`,
+`CMAKE_*`) are cleared only inside the temporary cmd.exe session of the build; nothing global is modified.
+Regression test: `powershell -NoProfile -File tests/test_msvc_detection.ps1` (needs Build Tools and `.tools`).

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(RoadRashTrilogyRecomp VERSION 0.60 LANGUAGES C CXX)
+project(RoadRashTrilogyRecomp VERSION 0.70 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -127,6 +127,12 @@ target_include_directories(split_screen_test PRIVATE src/presentation "${RUNNER_
 add_test(NAME split_screen COMMAND split_screen_test)
 target_sources(organic_scene_test PRIVATE src/presentation/road_markings.cpp)
 target_sources(split_screen_test PRIVATE src/presentation/sprite_coverage.cpp)
+add_executable(motorcycle_motion_test tests/test_motorcycle_motion.cpp src/presentation/sprite_geometry.cpp
+    src/presentation/sprite_assets.cpp src/presentation/road_surface.cpp src/presentation/road_markings.cpp
+    src/presentation/sprite_coverage.cpp)
+target_include_directories(motorcycle_motion_test PRIVATE src/presentation "${RUNNER_ROOT}/video")
+add_test(NAME motorcycle_motion COMMAND motorcycle_motion_test)
+add_test(NAME motorcycle_motion_native COMMAND motorcycle_motion_test native)
 add_executable(road_markings_test tests/test_road_markings.cpp src/presentation/road_markings.cpp)
 target_include_directories(road_markings_test PRIVATE src/presentation)
 add_test(NAME road_markings COMMAND road_markings_test)

@@ -399,7 +399,7 @@ def result(path,**values):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('action',choices=['check','prepare','apply','recover','recovery-info','cleanup'])
-    p.add_argument('--root',type=Path,required=True);p.add_argument('--current',default='0.60');p.add_argument('--result',type=Path)
+    p.add_argument('--root',type=Path,required=True);p.add_argument('--current',default='0.70');p.add_argument('--result',type=Path)
     p.add_argument('--asset',type=Path);p.add_argument('--job',type=Path);a=p.parse_args();root=no_links(a.root)
     try:
         if a.action=='check':

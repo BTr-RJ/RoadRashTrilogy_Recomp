@@ -1,6 +1,6 @@
 # Selectable soundtrack
 
-The Windows 0.60 installers include 18 full-length Dean Harris Composer remake
+The Windows 0.70 installers include 18 full-length Dean Harris Composer remake
 tracks mapped to 20 music cues across the trilogy. Source packages exclude the
 recordings. Credits, official source URLs, durations and SHA-256 hashes are
 included in `music/dean-harris/sources.json` inside the installers.
