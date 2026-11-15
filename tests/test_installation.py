@@ -3,7 +3,9 @@ from pathlib import Path
 import hashlib
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -144,5 +146,24 @@ class InstallationTests(unittest.TestCase):
             root=Path(tmp);pack=self.music_fixture(root)
             (pack/'rr1.tsv').write_text('1\t../../test.m4a\tSynthetic track\n')
             with self.assertRaisesRegex(ValueError,'Unsafe music filename'):release.music_files(pack)
+
+    def test_build_normalizes_quoted_path_before_vcvars(self):
+        # Regression: a quoted PATH entry (e.g. "C:\Program Files (x86)\NVIDIA ...") made vcvars64.bat fail
+        # inside cmd with "\NVIDIA ... was unexpected at this time". Runs the real PATH line from build.ps1.
+        if os.name!='nt':self.skipTest('Windows PATH and cmd.exe behaviour only')
+        vcvars=next(iter(sorted(Path(os.environ.get('ProgramFiles(x86)','C:/Program Files (x86)'),'Microsoft Visual Studio/2022').glob('*/VC/Auxiliary/Build/vcvars64.bat'))),None)
+        if vcvars is None:self.skipTest('Microsoft C++ x64 tools are not installed')
+        # The PATH repair lives in Repair-ProcessPath (scripts/msvc-toolchain.ps1), called first thing by build.ps1.
+        self.assertIn('Repair-ProcessPath',(ROOT/'scripts/build.ps1').read_text(encoding='utf-8'))
+        line=next(l.strip() for l in (ROOT/'scripts/msvc-toolchain.ps1').read_text(encoding='utf-8').splitlines() if l.strip().startswith('$env:PATH ='))
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp=Path(tmp);batch=tmp/'probe.cmd';script=tmp/'probe.ps1'
+            batch.write_text('@echo off\r\ncall "'+str(vcvars)+'" >nul\r\nif errorlevel 1 exit /b 1\r\necho VCVARS_OK\r\n',encoding='utf-8')
+            quoted='"C:\\Program Files (x86)\\NVIDIA Corporation\\PhysX\\Common";'
+            script.write_text("$env:PATH = '"+quoted+"' + $env:PATH\r\n"+line+"\r\n& cmd.exe /d /c \"`\""+str(batch)+"`\"\"\r\nexit $LASTEXITCODE\r\n",encoding='utf-8')
+            result=subprocess.run(['powershell.exe','-NoProfile','-ExecutionPolicy','Bypass','-File',str(script)],capture_output=True,text=True,encoding='utf-8',errors='replace')
+        self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+        self.assertIn('VCVARS_OK',result.stdout)
+        self.assertNotIn('was unexpected',result.stdout+result.stderr)
 
 if __name__=='__main__':unittest.main()

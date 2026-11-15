@@ -117,3 +117,9 @@ system service, registry installation or global PATH change.
 For bug reports, provide the version, Windows version, GPU, ROM SHA-256 and the
 relevant log excerpt. Do not upload ROMs, generated game code, saves or account
 tokens. Review logs for private paths before sharing.
+
+
+### "The C compiler identification is unknown" / LNK1181 on testCCompiler.c.obj
+Fixed in 0.70: the installer now clears environment variables that make `cl.exe` misbehave (a stray `CL` variable was
+reproduced as the cause) for the build session only and self-tests the C and C++ compilers before building. If it still
+fails, the log shows the detected environment variables; please attach it to the GitHub issue.
