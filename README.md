@@ -6,14 +6,14 @@ all three games, an optional enhanced motorcycle-motion presentation in Road Ras
 and a hardened installer build environment. The English installer builds the
 games locally from your own ROMs.
 
+![Road Rash Trilogy Recomp](assets/launcher/brand-050.png)
+
 ## Support the project
 
 [![Support BTr-RJ on Ko-fi](docs/media/kofi-support-small.jpg)](https://ko-fi.com/btrrj)
 
 All support will go entirely towards AI credits (Codex, Claude Code) to accelerate
 the release of current and future projects.
-
-![Road Rash Trilogy Recomp](assets/launcher/brand-050.png)
 
 ## Install and play
 
